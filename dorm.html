@@ -166,7 +166,7 @@ loadTHREE(function(){
   // ---------- Lights ----------
   scene.add(new THREE.HemisphereLight(0xffffff, 0x262626, 0.95));
   const dir = new THREE.DirectionalLight(0xffffff, 0.9); dir.position.set(3, 5, 2); scene.add(dir);
-  const overhead = new THREE.PointLight(0xeef6ff, 2.0, 12); overhead.position.set(0, 2.5, 0); scene.add(overhead);
+  const overhead = new THREE.PointLight(0xeef6ff, 0, 12); overhead.position.set(0, 2.5, 0); scene.add(overhead);
 
   const flashlight = new THREE.SpotLight(0xffffff, 1.2, 10, Math.PI/8, 0.35, 1);
   flashlight.position.set(0,0,0); camera.add(flashlight); camera.add(flashlight.target);
@@ -192,14 +192,18 @@ loadTHREE(function(){
   const fridgeBlk = new THREE.MeshStandardMaterial({ color:0x111111, roughness:0.45 });
 
   // ---------- Room Geometry ----------
+  // ROOM_239_GOLD_MASTER_START
+  const room239Group = new THREE.Group();
+  room239Group.name = 'room239';
+
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(room.w, room.d), floorMat);
   floor.rotation.x = -Math.PI/2; floor.position.set(0,0,0);
   floor.material.map.repeat.set(room.w / floorTile, room.d / floorTile);
-  scene.add(floor);
+  room239Group.add(floor);
 
   const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(room.w, room.d), ceilingMat);
   ceiling.rotation.x =  Math.PI/2; ceiling.position.set(0, room.h, 0);
-  scene.add(ceiling);
+  room239Group.add(ceiling);
 
   wallTex.colorSpace = THREE.SRGBColorSpace;
   function makeWall(width, height, rotY, pos) {
@@ -209,26 +213,34 @@ loadTHREE(function(){
     const mesh = new THREE.Mesh(new THREE.PlaneGeometry(width, height, 1, 1), mat);
     mesh.position.set(pos[0], pos[1], pos[2]); mesh.rotation.y = rotY; return mesh;
   }
-  const backWall  = makeWall(room.w, room.h, 0,          [0, room.h/2, -room.d/2]); scene.add(backWall);
-  const frontWall = makeWall(room.w, room.h, Math.PI,    [0, room.h/2,  room.d/2]); scene.add(frontWall);
-  const leftWall  = makeWall(room.d, room.h, -Math.PI/2, [-room.w/2, room.h/2, 0]); scene.add(leftWall);
-  const rightWall = makeWall(room.d, room.h,  Math.PI/2, [ room.w/2, room.h/2, 0]); scene.add(rightWall);
+  const backWall  = makeWall(room.w, room.h, 0,          [0, room.h/2, -room.d/2]); room239Group.add(backWall);
+  const frontWall = makeWall(room.w, room.h, Math.PI,    [0, room.h/2,  room.d/2 - 0.015]); room239Group.add(frontWall);
+  const leftWall  = makeWall(room.d, room.h, -Math.PI/2, [-room.w/2, room.h/2, 0]); room239Group.add(leftWall);
+  const rightWall = makeWall(room.d, room.h,  Math.PI/2, [ room.w/2, room.h/2, 0]); room239Group.add(rightWall);
 
   // Curtains + heater
   const curtains = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 1.8), new THREE.MeshStandardMaterial({ color:0xeee7d6, roughness:0.95 }));
-  curtains.position.set(0, 1.6, -room.d/2 + 0.01); scene.add(curtains);
+  curtains.position.set(0, 1.6, -room.d/2 + 0.01); room239Group.add(curtains);
   const heater = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.18, 0.08), new THREE.MeshStandardMaterial({ color:0xf0f0f0, roughness:0.6 }));
-  heater.position.set(0, 0.24, -room.d/2 + 0.04); scene.add(heater);
+  heater.position.set(0, 0.24, -room.d/2 + 0.04); room239Group.add(heater);
 
   // ---------- Main Door (BACK ON THE WALL, non-interactive) ----------
-  const door = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 2.0), new THREE.MeshStandardMaterial({ color:0x3b2b1a, roughness:0.9 }));
-  door.position.set(0, 1.0, room.d/2 - 0.005); // flush to inside face, centered
+  const door = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 2.0), new THREE.MeshStandardMaterial({ color:0x3b2b1a, roughness:0.9, side: THREE.DoubleSide }));
+  door.position.set(0, 1.0, room.d/2 - 0.02); // in front of front wall
   door.rotation.y = Math.PI;
-  scene.add(door);
+  room239Group.add(door);
 
   const knob = new THREE.Mesh(new THREE.SphereGeometry(0.04, 16, 16), new THREE.MeshStandardMaterial({ color:0xc0c0c0, roughness:0.3, metalness:0.8 }));
   knob.position.set(0.9/2 - 0.06, 1.0, door.position.z - 0.02);
-  scene.add(knob);
+  room239Group.add(knob);
+
+  const doorAnchor = new THREE.Object3D();
+  doorAnchor.name = "doorAnchor";
+  doorAnchor.position.set(0, 0, room.d/2); // door center for snapping
+  room239Group.add(doorAnchor);
+
+  scene.add(room239Group);
+  // ROOM_239_GOLD_MASTER_END
 
   // Utility
   function addBox(w,h,d,mat,x,y,z, rotY=0){
@@ -419,45 +431,277 @@ loadTHREE(function(){
   hallFloor.material.map.repeat.set(corridorLen/0.40, corridorW/0.40);
   hallGroup.add(hallFloor);
 
-  const hallCeiling = new THREE.Mesh(new THREE.PlaneGeometry(corridorLen, corridorW), ceilingMat.clone());
+  const hallCeilingMat = ceilingMat.clone();
+  hallCeilingMat.side = THREE.DoubleSide;
+  const hallCeiling = new THREE.Mesh(new THREE.PlaneGeometry(corridorLen, corridorW), hallCeilingMat);
   hallCeiling.rotation.x =  Math.PI/2;
   hallCeiling.position.set(0, room.h, room.d/2 + corridorW/2);
   hallGroup.add(hallCeiling);
 
-  // Corridor walls along the long sides (south and north faces)
+  // Corridor walls along the long sides (south and north faces) — DoubleSide so visible from inside hallway
   const wallMatHall = wallMat.clone(); wallMatHall.map = wallMat.map.clone();
   wallMatHall.map.wrapS = wallMatHall.map.wrapT = THREE.RepeatWrapping;
   wallMatHall.map.repeat.set(corridorLen/0.60, room.h/0.30);
+  wallMatHall.side = THREE.DoubleSide;
 
-  const wallSouth = new THREE.Mesh(new THREE.PlaneGeometry(corridorLen, room.h), wallMatHall);
-  wallSouth.rotation.y = Math.PI; // faces into corridor
-  wallSouth.position.set(0, room.h/2, room.d/2);
-  hallGroup.add(wallSouth);
+  // South wall as segments so each room has a door opening (only enterable by door)
+  const doorHalfW = 0.45;
+  const roomCentersX = [-7.72, -3.86, 0, 3.86, 7.72]; // 239 at 0; same spacing as room.w (3.86)
+  const southWallSegments = [];
+  const segEdges = [-corridorLen/2].concat(roomCentersX.flatMap(c => [c - doorHalfW, c + doorHalfW])).concat([corridorLen/2]);
+  for (let i = 0; i < segEdges.length - 1; i++) {
+    const a = segEdges[i], b = segEdges[i + 1];
+    if (b - a < 0.1) continue; // skip door gap
+    const segW = b - a;
+    const seg = new THREE.Mesh(new THREE.PlaneGeometry(segW, room.h), wallMatHall.clone());
+    seg.rotation.y = Math.PI;
+    seg.position.set((a + b) / 2, room.h/2, room.d/2);
+    hallGroup.add(seg);
+    southWallSegments.push(seg);
+  }
+  const wallSouth = southWallSegments[0]; // keep ref for collidables (all segments)
 
-  const wallNorth = wallSouth.clone();
-  wallNorth.rotation.y = 0;
-  wallNorth.position.z = room.d/2 + corridorW;
-  hallGroup.add(wallNorth);
+  // North wall as segments with door openings (like south wall)
+  const northWallSegments = [];
+  const northSegEdges = [-corridorLen/2].concat(roomCentersX.flatMap(c => [c - doorHalfW, c + doorHalfW])).concat([corridorLen/2]);
+  for (let i = 0; i < northSegEdges.length - 1; i++) {
+    const a = northSegEdges[i], b = northSegEdges[i + 1];
+    if (b - a < 0.1) continue;
+    const segW = b - a;
+    const nseg = new THREE.Mesh(new THREE.PlaneGeometry(segW, room.h), wallMatHall.clone());
+    nseg.rotation.y = 0;
+    nseg.position.set((a + b) / 2, room.h/2, room.d/2 + corridorW);
+    hallGroup.add(nseg);
+    northWallSegments.push(nseg);
+  }
 
-  // Corridor light
-  const hallLight = new THREE.PointLight(0xeef6ff, 1.3, 24);
-  hallLight.position.set(0, 2.6, room.d/2 + corridorW/2);
-  hallGroup.add(hallLight);
+  // Corridor end walls
+  const endWallMat = wallMatHall.clone(); endWallMat.map = wallMatHall.map.clone();
+  endWallMat.map.repeat.set(corridorW/0.60, room.h/0.30);
+  const endWallL = new THREE.Mesh(new THREE.PlaneGeometry(corridorW, room.h), endWallMat);
+  endWallL.rotation.y = Math.PI/2;
+  endWallL.position.set(-corridorLen/2, room.h/2, room.d/2 + corridorW/2);
+  hallGroup.add(endWallL);
+  const endWallR = new THREE.Mesh(new THREE.PlaneGeometry(corridorW, room.h), endWallMat.clone());
+  endWallR.rotation.y = -Math.PI/2;
+  endWallR.position.set(corridorLen/2, room.h/2, room.d/2 + corridorW/2);
+  hallGroup.add(endWallR);
 
-  // Decorative hallway doors along X (both sides)
-  const decoDoorMat = new THREE.MeshStandardMaterial({ color:0x38302a, roughness:0.85 });
+  // Corridor lights (spread along hallway)
+  [-6, 0, 6].forEach(function(lx) {
+    var hl = new THREE.PointLight(0xeef6ff, 1.0, 16);
+    hl.position.set(lx, 2.6, room.d/2 + corridorW/2);
+    hallGroup.add(hl);
+  });
+
+  // Decorative hallway doors (visible from the corridor for every room)
+  const decoDoorMat = new THREE.MeshStandardMaterial({ color:0x38302a, roughness:0.85, side: THREE.DoubleSide });
   const decoDoorGeo = new THREE.PlaneGeometry(0.9, 2.0);
-  const doorSpacing = 3.0;
-  const firstDoorX = -corridorLen/2 + 3.0;
-  for(let x = firstDoorX; x < corridorLen/2 - 0.5; x += doorSpacing){
-    const dl = new THREE.Mesh(decoDoorGeo, decoDoorMat); // south side
-    dl.position.set(x, 1.0, room.d/2 + 0.01);
-    dl.rotation.y = Math.PI;
-    hallGroup.add(dl);
-    const dr = dl.clone(); // north side
-    dr.position.z = room.d/2 + corridorW - 0.01;
-    dr.rotation.y = 0;
-    hallGroup.add(dr);
+  for (var dxi = 0; dxi < roomCentersX.length; dxi++) {
+    var dx = roomCentersX[dxi];
+    // South wall door (corridor side)
+    var dSouth = new THREE.Mesh(decoDoorGeo, decoDoorMat);
+    dSouth.position.set(dx, 1.0, room.d/2 + 0.008);
+    dSouth.rotation.y = Math.PI;
+    hallGroup.add(dSouth);
+    // South knob (corridor side)
+    var skMat = new THREE.MeshStandardMaterial({ color:0xc0c0c0, roughness:0.3, metalness:0.8 });
+    var sk = new THREE.Mesh(new THREE.SphereGeometry(0.04, 16, 16), skMat);
+    sk.position.set(dx + 0.9/2 - 0.06, 1.0, room.d/2 + 0.03);
+    hallGroup.add(sk);
+    // North wall door (corridor side)
+    var dNorth = new THREE.Mesh(decoDoorGeo, decoDoorMat);
+    dNorth.position.set(dx, 1.0, room.d/2 + corridorW - 0.008);
+    dNorth.rotation.y = 0;
+    hallGroup.add(dNorth);
+    // North knob (corridor side)
+    var nk = new THREE.Mesh(new THREE.SphereGeometry(0.04, 16, 16), skMat.clone());
+    nk.position.set(dx - 0.9/2 + 0.06, 1.0, room.d/2 + corridorW - 0.03);
+    hallGroup.add(nk);
+  }
+
+  // ---------- Other rooms (locked, furnished, both corridor sides) ----------
+  function createOtherRoom(roomCenterX, roomId, northSide) {
+    const R = { w: room.w, d: room.d, h: room.h };
+    const g = new THREE.Group();
+    g.name = 'room' + roomId;
+    if (northSide) {
+      g.position.set(roomCenterX, 0, room.d/2 + corridorW + R.d/2);
+      g.rotation.y = Math.PI;
+    } else {
+      g.position.set(roomCenterX, 0, 0);
+    }
+
+    var fMat2 = floorMat.clone(); fMat2.map = floorMat.map.clone();
+    var rFloor = new THREE.Mesh(new THREE.PlaneGeometry(R.w, R.d), fMat2);
+    rFloor.rotation.x = -Math.PI/2;
+    rFloor.material.map.repeat.set(R.w / floorTile, R.d / floorTile);
+    g.add(rFloor);
+
+    var rCeil = new THREE.Mesh(new THREE.PlaneGeometry(R.w, R.d), ceilingMat.clone());
+    rCeil.rotation.x = Math.PI/2; rCeil.position.set(0, R.h, 0);
+    g.add(rCeil);
+
+    function makeRWall(width, height, rotY, pos) {
+      var mat2 = new THREE.MeshStandardMaterial({ map: wallTex.clone(), roughness: 0.95, side: THREE.DoubleSide });
+      mat2.map.wrapS = mat2.map.wrapT = THREE.RepeatWrapping;
+      mat2.map.repeat.set(width / wallTileW, height / wallTileH);
+      var mesh = new THREE.Mesh(new THREE.PlaneGeometry(width, height), mat2);
+      mesh.position.set(pos[0], pos[1], pos[2]); mesh.rotation.y = rotY; return mesh;
+    }
+    var rBack  = makeRWall(R.w, R.h, 0,          [0, R.h/2, -R.d/2]); g.add(rBack);
+    var rLeft  = makeRWall(R.d, R.h, -Math.PI/2, [-R.w/2 + 0.015, R.h/2, 0]); g.add(rLeft);
+    var rRight = makeRWall(R.d, R.h,  Math.PI/2, [ R.w/2 - 0.015, R.h/2, 0]); g.add(rRight);
+
+    // Front wall segments around door opening
+    var doorW = 0.9, doorH = 2.0, mg = 0.02;
+    var sideW = (R.w - doorW) / 2 - mg;
+    var rFrontL = makeRWall(sideW, R.h, Math.PI, [-(R.w/2 - sideW/2 - mg), R.h/2, R.d/2 - 0.015]); g.add(rFrontL);
+    var rFrontR = makeRWall(sideW, R.h, Math.PI, [ (R.w/2 - sideW/2 - mg), R.h/2, R.d/2 - 0.015]); g.add(rFrontR);
+    // Wall above door
+    var topH = R.h - doorH;
+    var rFrontTop = makeRWall(doorW, topH, Math.PI, [0, doorH + topH/2, R.d/2 - 0.015]); g.add(rFrontTop);
+
+    // Door (visible both sides)
+    var rDoor = new THREE.Mesh(new THREE.PlaneGeometry(doorW, doorH), new THREE.MeshStandardMaterial({ color: 0x3b2b1a, roughness: 0.9, side: THREE.DoubleSide }));
+    rDoor.position.set(0, 1.0, R.d/2 - 0.02); rDoor.rotation.y = Math.PI;
+    g.add(rDoor);
+
+    // Door knobs (both sides)
+    var knbMat = new THREE.MeshStandardMaterial({ color: 0xc0c0c0, roughness: 0.3, metalness: 0.8 });
+    var rK1 = new THREE.Mesh(new THREE.SphereGeometry(0.04, 16, 16), knbMat);
+    rK1.position.set(doorW/2 - 0.06, 1.0, R.d/2 + 0.02); g.add(rK1);
+    var rK2 = new THREE.Mesh(new THREE.SphereGeometry(0.04, 16, 16), knbMat.clone());
+    rK2.position.set(doorW/2 - 0.06, 1.0, R.d/2 - 0.04); g.add(rK2);
+
+    // Door collision blocker (invisible)
+    var doorBlocker = new THREE.Mesh(new THREE.BoxGeometry(doorW, doorH, 0.12), new THREE.MeshBasicMaterial({ visible: false }));
+    doorBlocker.position.set(0, doorH/2, R.d/2); doorBlocker.visible = false; g.add(doorBlocker);
+
+    // --- Furniture ---
+    // Curtains + heater (back wall)
+    var rCurt = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 1.8), new THREE.MeshStandardMaterial({ color: 0xeee7d6, roughness: 0.95 }));
+    rCurt.position.set(0, 1.6, -R.d/2 + 0.01); g.add(rCurt);
+    var rHeat = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.18, 0.08), new THREE.MeshStandardMaterial({ color: 0xf0f0f0, roughness: 0.6 }));
+    rHeat.position.set(0, 0.24, -R.d/2 + 0.04); g.add(rHeat);
+
+    // Bed 1: along back wall (full width)
+    var BED_D = 0.99, bed1W = R.w - 0.10;
+    var bf1 = new THREE.Mesh(new THREE.BoxGeometry(bed1W, 0.25, BED_D), woodDark);
+    bf1.position.set(0, 0.125, -R.d/2 + BED_D/2 + 0.05); g.add(bf1);
+    var bm1 = new THREE.Mesh(new THREE.BoxGeometry(bed1W - 0.05, 0.20, BED_D - 0.05), bedding);
+    bm1.position.set(0, 0.33, bf1.position.z); g.add(bm1);
+
+    // Bed 2: along right wall (lengthwise)
+    var bed2L = 2.0;
+    var bf2 = new THREE.Mesh(new THREE.BoxGeometry(BED_D, 0.25, bed2L), woodDark);
+    bf2.position.set(R.w/2 - BED_D/2 - 0.03, 0.125, -R.d/2 + BED_D + bed2L/2 + 0.10); g.add(bf2);
+    var bm2 = new THREE.Mesh(new THREE.BoxGeometry(BED_D - 0.05, 0.20, bed2L - 0.05), bedding);
+    bm2.position.set(bf2.position.x, 0.33, bf2.position.z); g.add(bm2);
+
+    // Wardrobe on left wall
+    var rWard = new THREE.Mesh(new THREE.BoxGeometry(0.60, 2.00, 0.95), woodLight);
+    rWard.position.set(-R.w/2 + 0.32, 1.00, -R.d/2 + 0.50); g.add(rWard);
+
+    // Desk on left wall (mid-room)
+    var dskTop = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.03, 1.00), woodLight);
+    dskTop.position.set(-R.w/2 + 0.295, 0.75, 0.4); g.add(dskTop);
+    var dskSide1 = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.73, 0.02), woodLight);
+    dskSide1.position.set(dskTop.position.x, 0.365, -0.08); g.add(dskSide1);
+    var dskSide2 = dskSide1.clone(); dskSide2.position.z = 0.88; g.add(dskSide2);
+
+    // Dresser near front-right
+    var rDres = new THREE.Mesh(new THREE.BoxGeometry(0.50, 0.85, 0.75), woodLight);
+    rDres.position.set(R.w/2 - 0.27, 0.425, R.d/2 - 0.88); g.add(rDres);
+
+    // Room light
+    var rLight = new THREE.PointLight(0xeef6ff, 0.7, 8);
+    rLight.position.set(0, R.h - 0.15, 0); g.add(rLight);
+
+    scene.add(g);
+    return { group: g, collidables: [rFloor, rCeil, rBack, rLeft, rRight, rFrontL, rFrontR, rFrontTop, rDoor, doorBlocker, bf1, bm1, bf2, bm2, rWard, dskTop, rDres] };
+  }
+
+  const otherRooms = [];
+  // South-side rooms (same side as room 239)
+  [{ cx: -7.72, id: 238 }, { cx: -3.86, id: 237 }, { cx: 3.86, id: 241 }, { cx: 7.72, id: 242 }].forEach(function(o) {
+    otherRooms.push(createOtherRoom(o.cx, o.id, false));
+  });
+  // North-side rooms (across the hall)
+  [{ cx: -7.72, id: 240 }, { cx: -3.86, id: 243 }, { cx: 0, id: 245 }, { cx: 3.86, id: 247 }, { cx: 7.72, id: 249 }].forEach(function(o) {
+    otherRooms.push(createOtherRoom(o.cx, o.id, true));
+  });
+
+  // ---------- Room tracking + Door interaction system ----------
+  let currentRoom = 'room239';
+  const DOOR_PROX = 1.8; // distance to interact with door
+  const corridorMinZ = room.d/2;
+  const corridorMaxZ = room.d/2 + corridorW;
+
+  // World-space bounds for every room
+  const roomBoundsMap = {};
+  const ROOM_MARGIN = 0.25;
+  // Room 239 (south, cx=0)
+  roomBoundsMap['room239'] = { minX: -room.w/2 + ROOM_MARGIN, maxX: room.w/2 - ROOM_MARGIN, minZ: -room.d/2 + ROOM_MARGIN, maxZ: room.d/2 - ROOM_MARGIN };
+  // South rooms
+  [{ cx: -7.72, id: 238 }, { cx: -3.86, id: 237 }, { cx: 3.86, id: 241 }, { cx: 7.72, id: 242 }].forEach(function(o) {
+    roomBoundsMap['room' + o.id] = { minX: o.cx - room.w/2 + ROOM_MARGIN, maxX: o.cx + room.w/2 - ROOM_MARGIN, minZ: -room.d/2 + ROOM_MARGIN, maxZ: room.d/2 - ROOM_MARGIN };
+  });
+  // North rooms (positioned at z = room.d/2 + corridorW, extending another room.d northward)
+  [{ cx: -7.72, id: 240 }, { cx: -3.86, id: 243 }, { cx: 0, id: 245 }, { cx: 3.86, id: 247 }, { cx: 7.72, id: 249 }].forEach(function(o) {
+    var nz0 = room.d/2 + corridorW;
+    roomBoundsMap['room' + o.id] = { minX: o.cx - room.w/2 + ROOM_MARGIN, maxX: o.cx + room.w/2 - ROOM_MARGIN, minZ: nz0 + ROOM_MARGIN, maxZ: nz0 + room.d - ROOM_MARGIN };
+  });
+
+  // Door data: world position, corridor-side enter point, room-side exit point
+  const allDoors = [];
+  // Room 239 door
+  allDoors.push({ roomId: 'room239', doorX: 0, doorZ: room.d/2, side: 'south',
+    enterPos: new THREE.Vector3(0, EYE, room.d/2 - 0.5), enterYaw: Math.PI,
+    exitPos: new THREE.Vector3(0, EYE, room.d/2 + 0.5), exitYaw: 0
+  });
+  // South rooms
+  [{ cx: -7.72, id: 238 }, { cx: -3.86, id: 237 }, { cx: 3.86, id: 241 }, { cx: 7.72, id: 242 }].forEach(function(o) {
+    allDoors.push({ roomId: 'room' + o.id, doorX: o.cx, doorZ: room.d/2, side: 'south',
+      enterPos: new THREE.Vector3(o.cx, EYE, room.d/2 - 0.5), enterYaw: Math.PI,
+      exitPos: new THREE.Vector3(o.cx, EYE, room.d/2 + 0.5), exitYaw: 0
+    });
+  });
+  // North rooms
+  [{ cx: -7.72, id: 240 }, { cx: -3.86, id: 243 }, { cx: 0, id: 245 }, { cx: 3.86, id: 247 }, { cx: 7.72, id: 249 }].forEach(function(o) {
+    var dz = room.d/2 + corridorW;
+    allDoors.push({ roomId: 'room' + o.id, doorX: o.cx, doorZ: dz, side: 'north',
+      enterPos: new THREE.Vector3(o.cx, EYE, dz + 0.5), enterYaw: 0,
+      exitPos: new THREE.Vector3(o.cx, EYE, dz - 0.5), exitYaw: Math.PI
+    });
+  });
+
+  function findNearbyDoor() {
+    var px = camera.position.x, pz = camera.position.z;
+    for (var i = 0; i < allDoors.length; i++) {
+      var d = allDoors[i];
+      var dx = px - d.doorX, dz = pz - d.doorZ;
+      if (Math.sqrt(dx*dx + dz*dz) < DOOR_PROX) return d;
+    }
+    return null;
+  }
+
+  function tryDoorInteraction() {
+    var d = findNearbyDoor();
+    if (!d) return;
+    if (currentRoom === 'corridor') {
+      // Enter the room
+      camera.position.copy(d.enterPos);
+      yaw = d.enterYaw;
+      pitch = 0;
+      currentRoom = d.roomId;
+    } else if (currentRoom === d.roomId) {
+      // Exit to corridor
+      camera.position.copy(d.exitPos);
+      yaw = d.exitYaw;
+      pitch = 0;
+      currentRoom = 'corridor';
+    }
   }
 
   // ---------- Interactions ----------
@@ -470,7 +714,7 @@ loadTHREE(function(){
     raycaster.setFromCamera({x:0,y:0}, camera);
     const picks = raycaster.intersectObjects(interactables, true);
     if(picks.length && picks[0].distance < 1.6) { canInteract = picks[0].object; }
-    interactUI.style.opacity = canInteract ? 1 : 0;
+    interactUI.style.opacity = (canInteract || findNearbyDoor()) ? 1 : 0;
   }
   function useObject(obj){
     if(!obj) return;
@@ -493,23 +737,23 @@ loadTHREE(function(){
   // ---------- Movement ----------
   const hud = document.getElementById('hud');
   hud.innerHTML = `<b>Game active.</b> LiDAR room: ${room.w.toFixed(3)}m × ${room.h.toFixed(3)}m × ${room.d.toFixed(3)}m.
-    WASD move • Shift sprint • Space jump • E interact (fridge) • F flashlight • L overhead • R reset • P pointer-lock.`;
+    WASD move • Shift sprint • Space jump • E interact/door • F flashlight • L overhead • R reset • P pointer-lock.`;
 
   const keys = {};
-  addEventListener('keydown', e=>{ keys[e.code]=true; if(e.code==='KeyE') useObject(canInteract); });
+  addEventListener('keydown', e=>{ keys[e.code]=true; if(e.code==='KeyE'){ if(canInteract) useObject(canInteract); else tryDoorInteraction(); } });
   addEventListener('keyup',   e=>{ keys[e.code]=false; });
   addEventListener('keydown', e=>{
     if(e.code==='KeyF'){ flashlight.intensity = flashlight.intensity>0 ? 0 : 1.2; }
-    if(e.code==='KeyL'){ overhead.intensity   = overhead.intensity>0   ? 0 : 2.0; }
-    if(e.code==='KeyR'){ camera.position.set(0, EYE, 1.75); vy = 0; onGround = true; }
+    if(e.code==='KeyL'){ overhead.intensity   = overhead.intensity>0   ? 0 : 0.03; }
+    if(e.code==='KeyR'){ camera.position.set(0, EYE, 1.75); vy = 0; onGround = true; currentRoom = 'room239'; }
   });
 
-  // Bounds: inside room, and (if you get there) within the side hallway rectangle
-  const bounds = {
+  // Corridor bounds
+  const corrBounds = {
     minX: -corridorLen/2 + 0.35,
     maxX:  corridorLen/2 - 0.35,
-    minZ: -room.d/2 + 0.35,
-    maxZ:  room.d/2 + corridorW - 0.35
+    minZ:  room.d/2 + ROOM_MARGIN,
+    maxZ:  room.d/2 + corridorW - ROOM_MARGIN
   };
 
   const GRAVITY = 9.8, speedWalk = 2.35, speedSprint = 4.1, jump = 4.7;
@@ -534,15 +778,16 @@ loadTHREE(function(){
     if(next.y < EYE){ next.y = EYE; vy = 0; onGround = true; }
     if(next.y > room.h-0.1){ next.y = room.h-0.1; }
 
-    // Clamp: if still inside the dorm (before the wall), use room bounds;
-    // otherwise, clamp within corridor rectangle.
-    if(next.z < room.d/2 - 0.35){
-      const margin = 0.35;
-      next.x = Math.max(-room.w/2 + margin, Math.min(room.w/2 - margin, next.x));
-      next.z = Math.max(-room.d/2 + margin, Math.min(room.d/2 - margin, next.z));
+    // Dynamic room-based movement bounds
+    if (currentRoom === 'corridor') {
+      next.x = Math.max(corrBounds.minX, Math.min(corrBounds.maxX, next.x));
+      next.z = Math.max(corrBounds.minZ, Math.min(corrBounds.maxZ, next.z));
     } else {
-      next.x = Math.max(bounds.minX, Math.min(bounds.maxX, next.x));
-      next.z = Math.max(room.d/2 + 0.20, Math.min(bounds.maxZ, next.z));
+      var rb = roomBoundsMap[currentRoom];
+      if (rb) {
+        next.x = Math.max(rb.minX, Math.min(rb.maxX, next.x));
+        next.z = Math.max(rb.minZ, Math.min(rb.maxZ, next.z));
+      }
     }
 
     camera.position.copy(next);
@@ -574,8 +819,11 @@ loadTHREE(function(){
     pistolGroup.rotation.x = -0.07 + recoilKick * -0.03;
   }
 
-  // Colliders (room + hall + fixed door)
-  const collidables = [floor, ceiling, backWall, frontWall, leftWall, rightWall, wardrobe, dresser, fridge, fryer, bedLeftFrame, bedLeftMatt, bedRightFrame, bedRightMatt, door, hallFloor, hallCeiling, wallSouth, wallNorth];
+  // Colliders (room 239 + hall + wall segments + other rooms)
+  const collidables = [floor, ceiling, backWall, frontWall, leftWall, rightWall, wardrobe, dresser, fridge, fryer, bedLeftFrame, bedLeftMatt, bedRightFrame, bedRightMatt, door, hallFloor, hallCeiling, endWallL, endWallR];
+  southWallSegments.forEach(function(seg){ collidables.push(seg); });
+  northWallSegments.forEach(function(seg){ collidables.push(seg); });
+  otherRooms.forEach(function(r){ r.collidables.forEach(function(m){ collidables.push(m); }); });
   collidables.push(fridgeDoor);
 
   const bullets = [], impacts = [];
