@@ -4,6 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Dorm Demo • FP PB-Glock + Projectiles + Side Hallway</title>
+<script src="SpawnLoadout.js"></script>
 <style>
   html, body { margin:0; padding:0; height:100%; overflow:hidden; background:#0a0a0a; font-family:Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; }
   #hud { position:fixed; left:16px; bottom:16px; color:#e6e6e6; font-size:12px; line-height:1.4; background:rgba(0,0,0,.45); padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,.08); max-width:56ch }
@@ -13,6 +14,15 @@
   #crosshair:after  { width:1px; height:10px; left:4.5px; top:0; }
   #interact { position:fixed; left:50%; bottom:18%; transform:translateX(-50%); color:#f5f5f5; background:rgba(0,0,0,.55); padding:8px 12px; border-radius:10px; font-size:13px; letter-spacing:.2px; opacity:0; transition:opacity .15s ease; border:1px solid rgba(255,255,255,.08) }
   #notice { position:fixed; right:16px; top:16px; color:#ddd; background:rgba(0,0,0,.55); padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,.1); font-size:12px; max-width:56ch }
+  #vignette { position:fixed; inset:0; pointer-events:none; will-change:opacity;
+    background:radial-gradient(ellipse at center, transparent 52%, rgba(0,0,0,.72) 100%); opacity:0; }
+  #scope-overlay { position:fixed; inset:0; pointer-events:none; opacity:0; display:none;
+    background:radial-gradient(circle 97px at 50% 50%, transparent 96px, rgba(6,6,6,.97) 97px); }
+  #scope-overlay::before, #scope-overlay::after { content:''; position:absolute; background:rgba(190,190,190,.55); }
+  #scope-overlay::before { left:50%; top:50%; width:1px; height:148px; transform:translate(-50%,-50%); }
+  #scope-overlay::after  { left:50%; top:50%; width:148px; height:1px; transform:translate(-50%,-50%); }
+  #crosshair.ads::before { width:6px !important; }
+  #crosshair.ads::after  { height:6px !important; }
 </style>
 
 <!-- Load THREE from CDN with fallback -->
@@ -33,6 +43,8 @@
   <div id="hud"></div>
   <div id="interact">Press E</div>
   <div id="crosshair"></div>
+  <div id="vignette"></div>
+  <div id="scope-overlay"></div>
   <div id="notice">Loading engine…</div>
 
 <script>
@@ -150,10 +162,18 @@ loadTHREE(function(){
   // fallback look (hold RMB)
   let fallbackLook=false, lastMouse=null;
   renderer.domElement.addEventListener('mousedown', (e) => {
-    if (document.pointerLockElement) return;
+    if (document.pointerLockElement) {
+      if (e.button === 2 && window.SpawnLoadout && SpawnLoadout.isActive())
+        SpawnLoadout.setInput({ ads: true });
+      return;
+    }
     if (e.button === 2) { fallbackLook = true; lastMouse = {x:e.clientX, y:e.clientY}; e.preventDefault(); }
   });
-  renderer.domElement.addEventListener('mouseup', () => { fallbackLook = false; });
+  renderer.domElement.addEventListener('mouseup', (e) => {
+    fallbackLook = false;
+    if (e.button === 2 && window.SpawnLoadout && SpawnLoadout.isActive())
+      SpawnLoadout.setInput({ ads: false });
+  });
   renderer.domElement.addEventListener('contextmenu', (e) => { if (!document.pointerLockElement) e.preventDefault(); });
   renderer.domElement.addEventListener('mousemove', (e) => {
     if (!fallbackLook || document.pointerLockElement) return;
@@ -166,7 +186,7 @@ loadTHREE(function(){
   // ---------- Lights ----------
   scene.add(new THREE.HemisphereLight(0xffffff, 0x262626, 0.95));
   const dir = new THREE.DirectionalLight(0xffffff, 0.9); dir.position.set(3, 5, 2); scene.add(dir);
-  const overhead = new THREE.PointLight(0xeef6ff, 0, 12); overhead.position.set(0, 2.5, 0); scene.add(overhead);
+  const overhead = new THREE.PointLight(0xeef6ff, 0.03, 12); overhead.position.set(0, 2.5, 0); scene.add(overhead);
 
   const flashlight = new THREE.SpotLight(0xffffff, 1.2, 10, Math.PI/8, 0.35, 1);
   flashlight.position.set(0,0,0); camera.add(flashlight); camera.add(flashlight.target);
@@ -192,18 +212,14 @@ loadTHREE(function(){
   const fridgeBlk = new THREE.MeshStandardMaterial({ color:0x111111, roughness:0.45 });
 
   // ---------- Room Geometry ----------
-  // ROOM_239_GOLD_MASTER_START
-  const room239Group = new THREE.Group();
-  room239Group.name = 'room239';
-
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(room.w, room.d), floorMat);
   floor.rotation.x = -Math.PI/2; floor.position.set(0,0,0);
   floor.material.map.repeat.set(room.w / floorTile, room.d / floorTile);
-  room239Group.add(floor);
+  scene.add(floor);
 
   const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(room.w, room.d), ceilingMat);
   ceiling.rotation.x =  Math.PI/2; ceiling.position.set(0, room.h, 0);
-  room239Group.add(ceiling);
+  scene.add(ceiling);
 
   wallTex.colorSpace = THREE.SRGBColorSpace;
   function makeWall(width, height, rotY, pos) {
@@ -213,34 +229,77 @@ loadTHREE(function(){
     const mesh = new THREE.Mesh(new THREE.PlaneGeometry(width, height, 1, 1), mat);
     mesh.position.set(pos[0], pos[1], pos[2]); mesh.rotation.y = rotY; return mesh;
   }
-  const backWall  = makeWall(room.w, room.h, 0,          [0, room.h/2, -room.d/2]); room239Group.add(backWall);
-  const frontWall = makeWall(room.w, room.h, Math.PI,    [0, room.h/2,  room.d/2 - 0.015]); room239Group.add(frontWall);
-  const leftWall  = makeWall(room.d, room.h, -Math.PI/2, [-room.w/2, room.h/2, 0]); room239Group.add(leftWall);
-  const rightWall = makeWall(room.d, room.h,  Math.PI/2, [ room.w/2, room.h/2, 0]); room239Group.add(rightWall);
+  const backWall  = makeWall(room.w, room.h, 0,          [0, room.h/2, -room.d/2]); scene.add(backWall);
+  const frontWall = makeWall(room.w, room.h, Math.PI,    [0, room.h/2,  room.d/2]); scene.add(frontWall);
+  const leftWall  = makeWall(room.d, room.h, -Math.PI/2, [-room.w/2, room.h/2, 0]); scene.add(leftWall);
+  const rightWall = makeWall(room.d, room.h,  Math.PI/2, [ room.w/2, room.h/2, 0]); scene.add(rightWall);
 
   // Curtains + heater
   const curtains = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 1.8), new THREE.MeshStandardMaterial({ color:0xeee7d6, roughness:0.95 }));
-  curtains.position.set(0, 1.6, -room.d/2 + 0.01); room239Group.add(curtains);
+  curtains.position.set(0, 1.6, -room.d/2 + 0.01); scene.add(curtains);
   const heater = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.18, 0.08), new THREE.MeshStandardMaterial({ color:0xf0f0f0, roughness:0.6 }));
-  heater.position.set(0, 0.24, -room.d/2 + 0.04); room239Group.add(heater);
+  heater.position.set(0, 0.24, -room.d/2 + 0.04); scene.add(heater);
 
-  // ---------- Main Door (BACK ON THE WALL, non-interactive) ----------
-  const door = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 2.0), new THREE.MeshStandardMaterial({ color:0x3b2b1a, roughness:0.9, side: THREE.DoubleSide }));
-  door.position.set(0, 1.0, room.d/2 - 0.02); // in front of front wall
-  door.rotation.y = Math.PI;
-  room239Group.add(door);
+  // ---------- FRONT WALL OPENING + HINGED DOOR (interactive, walk-through) ----------
+  const DOOR_W = 0.92;
+  const DOOR_H = 2.05;
+  const DOOR_T = 0.045;
+  const DOOR_X = 0.0;                 // centered on front wall
+  const FRONT_Z = room.d/2;           // front wall plane at +d/2
 
-  const knob = new THREE.Mesh(new THREE.SphereGeometry(0.04, 16, 16), new THREE.MeshStandardMaterial({ color:0xc0c0c0, roughness:0.3, metalness:0.8 }));
-  knob.position.set(0.9/2 - 0.06, 1.0, door.position.z - 0.02);
-  room239Group.add(knob);
+  // Remove the solid front wall; replace with 3-piece wall + doorway
+  scene.remove(frontWall);
 
-  const doorAnchor = new THREE.Object3D();
-  doorAnchor.name = "doorAnchor";
-  doorAnchor.position.set(0, 0, room.d/2); // door center for snapping
-  room239Group.add(doorAnchor);
+  function makeFrontWallPiece(width, height, centerX, centerY, centerZ) {
+    const mat = new THREE.MeshStandardMaterial({ map: wallTex, roughness:0.95, side:THREE.DoubleSide });
+    mat.map = mat.map.clone();
+    mat.map.wrapS = mat.map.wrapT = THREE.RepeatWrapping;
+    mat.map.repeat.set(width / wallTileW, height / wallTileH);
+    mat.map.center.set(0.5, 0.5);
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(width, height, 1, 1), mat);
+    m.position.set(centerX, centerY, centerZ);
+    m.rotation.y = Math.PI;
+    return m;
+  }
 
-  scene.add(room239Group);
-  // ROOM_239_GOLD_MASTER_END
+  const wallSideW = (room.w - DOOR_W) * 0.5;
+  const headerH   = room.h - DOOR_H;
+
+  const frontWallLeft  = makeFrontWallPiece(wallSideW, room.h, -room.w/2 + wallSideW/2, room.h/2, FRONT_Z);
+  const frontWallRight = makeFrontWallPiece(wallSideW, room.h,  room.w/2 - wallSideW/2, room.h/2, FRONT_Z);
+  const frontWallTop   = makeFrontWallPiece(DOOR_W, headerH, DOOR_X, DOOR_H + headerH/2, FRONT_Z);
+
+  scene.add(frontWallLeft, frontWallRight, frontWallTop);
+
+  // Door pivot at left edge, slightly inside the room
+  const doorPivot = new THREE.Group();
+  doorPivot.position.set(DOOR_X - DOOR_W/2, 0, FRONT_Z - 0.005);
+  scene.add(doorPivot);
+
+  const doorLeaf = new THREE.Mesh(
+    new THREE.BoxGeometry(DOOR_W, DOOR_H, DOOR_T),
+    new THREE.MeshStandardMaterial({ color:0x3b2b1a, roughness:0.9 })
+  );
+  doorLeaf.position.set(DOOR_W/2, DOOR_H/2, -DOOR_T/2);
+  doorPivot.add(doorLeaf);
+
+  const doorKnob = new THREE.Mesh(
+    new THREE.SphereGeometry(0.04, 16, 16),
+    new THREE.MeshStandardMaterial({ color:0xc0c0c0, roughness:0.3, metalness:0.8 })
+  );
+  doorKnob.position.set(DOOR_W - 0.08, 1.0, -DOOR_T*0.35);
+  doorLeaf.add(doorKnob);
+
+  doorPivot.userData = {
+    type: 'hingeDoor',
+    open: false,
+    theta: 0,
+    min: 0,
+    max: Math.PI * 0.55,
+    speed: 10,
+    rotDir: -1,
+  };
+  doorLeaf.userData.pivot = doorPivot;
 
   // Utility
   function addBox(w,h,d,mat,x,y,z, rotY=0){
@@ -418,7 +477,7 @@ loadTHREE(function(){
 
   // ---------- Corridor: SIDE-TO-SIDE hallway outside your door ----------
   const corridorW = 2.20;            // hallway depth (Z)
-  const corridorLen = 18.0;          // hallway length along X
+  const corridorLen = 30.0;          // hallway length along X
   const corridorY  = 0;
   const hallGroup = new THREE.Group(); scene.add(hallGroup);
 
@@ -431,281 +490,373 @@ loadTHREE(function(){
   hallFloor.material.map.repeat.set(corridorLen/0.40, corridorW/0.40);
   hallGroup.add(hallFloor);
 
-  const hallCeilingMat = ceilingMat.clone();
-  hallCeilingMat.side = THREE.DoubleSide;
-  const hallCeiling = new THREE.Mesh(new THREE.PlaneGeometry(corridorLen, corridorW), hallCeilingMat);
+  const hallCeiling = new THREE.Mesh(new THREE.PlaneGeometry(corridorLen, corridorW), ceilingMat.clone());
   hallCeiling.rotation.x =  Math.PI/2;
   hallCeiling.position.set(0, room.h, room.d/2 + corridorW/2);
   hallGroup.add(hallCeiling);
 
-  // Corridor walls along the long sides (south and north faces) — DoubleSide so visible from inside hallway
+  // Corridor walls along the long sides (south and north faces)
   const wallMatHall = wallMat.clone(); wallMatHall.map = wallMat.map.clone();
   wallMatHall.map.wrapS = wallMatHall.map.wrapT = THREE.RepeatWrapping;
   wallMatHall.map.repeat.set(corridorLen/0.60, room.h/0.30);
-  wallMatHall.side = THREE.DoubleSide;
 
-  // South wall as segments so each room has a door opening (only enterable by door)
-  const doorHalfW = 0.45;
-  const roomCentersX = [-7.72, -3.86, 0, 3.86, 7.72]; // 239 at 0; same spacing as room.w (3.86)
-  const southWallSegments = [];
-  const segEdges = [-corridorLen/2].concat(roomCentersX.flatMap(c => [c - doorHalfW, c + doorHalfW])).concat([corridorLen/2]);
-  for (let i = 0; i < segEdges.length - 1; i++) {
-    const a = segEdges[i], b = segEdges[i + 1];
-    if (b - a < 0.1) continue; // skip door gap
-    const segW = b - a;
-    const seg = new THREE.Mesh(new THREE.PlaneGeometry(segW, room.h), wallMatHall.clone());
-    seg.rotation.y = Math.PI;
-    seg.position.set((a + b) / 2, room.h/2, room.d/2);
-    hallGroup.add(seg);
-    southWallSegments.push(seg);
+  // South wall: two side pieces flanking the room opening so the doorway stays clear.
+  // rotation.y = 0  →  normal faces +z  →  visible from inside the corridor.
+  const sideW = (corridorLen - room.w) * 0.5;
+  function makeSideWallMat() {
+    const m = wallMatHall.clone(); m.map = wallMatHall.map.clone();
+    m.map.wrapS = m.map.wrapT = THREE.RepeatWrapping;
+    m.map.repeat.set(sideW / 0.60, room.h / 0.30);
+    return m;
   }
-  const wallSouth = southWallSegments[0]; // keep ref for collidables (all segments)
+  const wallSouthL = new THREE.Mesh(new THREE.PlaneGeometry(sideW, room.h), makeSideWallMat());
+  wallSouthL.rotation.y = 0;
+  wallSouthL.position.set(-(room.w/2 + sideW/2), room.h/2, room.d/2);
+  hallGroup.add(wallSouthL);
 
-  // North wall as segments with door openings (like south wall)
-  const northWallSegments = [];
-  const northSegEdges = [-corridorLen/2].concat(roomCentersX.flatMap(c => [c - doorHalfW, c + doorHalfW])).concat([corridorLen/2]);
-  for (let i = 0; i < northSegEdges.length - 1; i++) {
-    const a = northSegEdges[i], b = northSegEdges[i + 1];
-    if (b - a < 0.1) continue;
-    const segW = b - a;
-    const nseg = new THREE.Mesh(new THREE.PlaneGeometry(segW, room.h), wallMatHall.clone());
-    nseg.rotation.y = 0;
-    nseg.position.set((a + b) / 2, room.h/2, room.d/2 + corridorW);
-    hallGroup.add(nseg);
-    northWallSegments.push(nseg);
+  const wallSouthR = new THREE.Mesh(new THREE.PlaneGeometry(sideW, room.h), makeSideWallMat());
+  wallSouthR.rotation.y = 0;
+  wallSouthR.position.set(room.w/2 + sideW/2, room.h/2, room.d/2);
+  hallGroup.add(wallSouthR);
+
+  // North wall: full width.
+  // rotation.y = Math.PI  →  normal faces -z  →  visible from inside the corridor.
+  const wallNorthMat = wallMatHall.clone(); wallNorthMat.map = wallMatHall.map.clone();
+  wallNorthMat.map.wrapS = wallNorthMat.map.wrapT = THREE.RepeatWrapping;
+  wallNorthMat.map.repeat.set(corridorLen / 0.60, room.h / 0.30);
+  const wallNorth = new THREE.Mesh(new THREE.PlaneGeometry(corridorLen, room.h), wallNorthMat);
+  wallNorth.rotation.y = Math.PI;
+  wallNorth.position.set(0, room.h/2, room.d/2 + corridorW);
+  hallGroup.add(wallNorth);
+
+  // Corridor light
+  const hallLight = new THREE.PointLight(0xeef6ff, 1.3, 24);
+  hallLight.position.set(0, 2.6, room.d/2 + corridorW/2);
+  hallGroup.add(hallLight);
+
+  // ---------- Neighboring dorm rooms ----------
+  const doorSpacing  = room.w + 0.15;             // one room-width + thin wall between
+  // Build positions symmetrically outward from player's room (at cx=0)
+  // so rooms pack flush against each other just like the real floor plan.
+  const dormDoorXs = [];
+  const _firstR = room.w + 0.075;   // = room.w/2 + wall(0.15)/2 + room.w/2
+  for (let x = _firstR; x < corridorLen/2 - room.w/2 - 0.05; x += doorSpacing) {
+    dormDoorXs.push( x);
+    dormDoorXs.push(-x);
+  }
+  dormDoorXs.sort((a, b) => a - b);
+
+  const DORM_W      = room.w;   // same width as player's room
+  const DORM_D      = room.d;   // same depth as player's room
+  const DORM_DOOR_W = DOOR_W;   // same door width
+  const DORM_DOOR_H = DOOR_H;   // same door height
+  const northWallZ  = FRONT_Z + corridorW;
+
+  // Build a corridor wall from x0→x1 with door-sized openings at each cx
+  function buildSegWall(x0, x1, z, rotY, openingCXs) {
+    const sorted = [...openingCXs].sort((a, b) => a - b);
+    const seg = (xa, xb, ya, yb) => {
+      const w = xb - xa, h = yb - ya;
+      if (w < 0.01 || h < 0.01) return;
+      const m = wallMatHall.clone(); m.map = wallMatHall.map.clone();
+      m.map.wrapS = m.map.wrapT = THREE.RepeatWrapping;
+      m.map.repeat.set(w / 0.60, h / 0.30);
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), m);
+      mesh.rotation.y = rotY;
+      mesh.position.set((xa + xb) / 2, (ya + yb) / 2, z);
+      hallGroup.add(mesh);
+    };
+    let cur = x0;
+    for (const cx of sorted) {
+      seg(cur, cx - DORM_DOOR_W/2,         0,           room.h); // full-height before opening
+      seg(cx - DORM_DOOR_W/2, cx + DORM_DOOR_W/2, DORM_DOOR_H, room.h); // header
+      cur = cx + DORM_DOOR_W/2;
+    }
+    seg(cur, x1, 0, room.h); // final piece
   }
 
-  // Corridor end walls
-  const endWallMat = wallMatHall.clone(); endWallMat.map = wallMatHall.map.clone();
-  endWallMat.map.repeat.set(corridorW/0.60, room.h/0.30);
-  const endWallL = new THREE.Mesh(new THREE.PlaneGeometry(corridorW, room.h), endWallMat);
-  endWallL.rotation.y = Math.PI/2;
-  endWallL.position.set(-corridorLen/2, room.h/2, room.d/2 + corridorW/2);
-  hallGroup.add(endWallL);
-  const endWallR = new THREE.Mesh(new THREE.PlaneGeometry(corridorW, room.h), endWallMat.clone());
-  endWallR.rotation.y = -Math.PI/2;
-  endWallR.position.set(corridorLen/2, room.h/2, room.d/2 + corridorW/2);
-  hallGroup.add(endWallR);
+  // All generated positions are already outside the player's room (|cx| >= room.w + 0.075)
+  const southDormXs = dormDoorXs;
+  hallGroup.remove(wallSouthL);
+  hallGroup.remove(wallSouthR);
+  buildSegWall(-corridorLen/2, -room.w/2, FRONT_Z, 0, southDormXs.filter(cx => cx < 0));
+  buildSegWall( room.w/2,  corridorLen/2, FRONT_Z, 0, southDormXs.filter(cx => cx > 0));
 
-  // Corridor lights (spread along hallway)
-  [-6, 0, 6].forEach(function(lx) {
-    var hl = new THREE.PointLight(0xeef6ff, 1.0, 16);
-    hl.position.set(lx, 2.6, room.d/2 + corridorW/2);
-    hallGroup.add(hl);
+  // North wall: rooms at every door position
+  hallGroup.remove(wallNorth);
+  buildSegWall(-corridorLen/2, corridorLen/2, northWallZ, Math.PI, dormDoorXs);
+
+  // ── Close left dead-end of branch corridor ──
+  {
+    const m = wallMatHall.clone(); m.map = wallMatHall.map.clone();
+    m.map.wrapS = m.map.wrapT = THREE.RepeatWrapping;
+    m.map.repeat.set(corridorW / 0.60, room.h / 0.30);
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(corridorW, room.h), m);
+    mesh.rotation.y = -Math.PI / 2;           // normal faces +x = visible from inside branch
+    mesh.position.set(-corridorLen / 2, room.h / 2, FRONT_Z + corridorW / 2);
+    hallGroup.add(mesh);
+  }
+
+  // ── T-junction at right end of branch (x = corridorLen/2) ──
+  // A perpendicular stub corridor runs ±T_STEM metres along Z from this point.
+  const T_X    = corridorLen / 2;
+  const T_STEM = 6.0;
+  const tZ0    = FRONT_Z   - T_STEM;          // south end of stub
+  const tZ1    = northWallZ + T_STEM;          // north end of stub
+  const tTotalZ = tZ1 - tZ0;
+  const tCenterZ = (tZ0 + tZ1) / 2;
+  const tCenterX = T_X + corridorW / 2;
+
+  // Helper: DoubleSide wall tile material for the T-stub
+  function makeTMat(repeatX, repeatY) {
+    const tex = wallTex.clone();
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(repeatX, repeatY);
+    return new THREE.MeshStandardMaterial({ map: tex, roughness: 0.95, side: THREE.DoubleSide });
+  }
+
+  // Floor
+  {
+    const tex = floorTex.clone();
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(corridorW / 0.40, tTotalZ / 0.40);
+    const fl = new THREE.Mesh(new THREE.PlaneGeometry(corridorW, tTotalZ),
+      new THREE.MeshStandardMaterial({ map: tex, roughness: 0.6, side: THREE.DoubleSide }));
+    fl.rotation.x = -Math.PI / 2; fl.position.set(tCenterX, 0, tCenterZ);
+    hallGroup.add(fl);
+  }
+  // Ceiling
+  {
+    const ce = new THREE.Mesh(new THREE.PlaneGeometry(corridorW, tTotalZ),
+      new THREE.MeshStandardMaterial({ color: 0xdddddd, roughness: 1.0, side: THREE.DoubleSide }));
+    ce.rotation.x = Math.PI / 2; ce.position.set(tCenterX, room.h, tCenterZ);
+    hallGroup.add(ce);
+  }
+  // Build a corridor wall running along Z with door-height openings at each cz
+  function buildSegWallZ(z0, z1, x, rotY, openingCZs) {
+    const sorted = [...openingCZs].sort((a, b) => a - b);
+    const seg = (za, zb, ya, yb) => {
+      const dz = zb - za, h = yb - ya;
+      if (dz < 0.01 || h < 0.01) return;
+      const m = makeTMat(dz / 0.60, h / 0.30);
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(dz, h), m);
+      mesh.rotation.y = rotY;
+      mesh.position.set(x, (ya + yb) / 2, (za + zb) / 2);
+      hallGroup.add(mesh);
+    };
+    let cur = z0;
+    for (const cz of sorted) {
+      seg(cur, cz - DORM_DOOR_W / 2, 0, room.h);
+      seg(cz - DORM_DOOR_W / 2, cz + DORM_DOOR_W / 2, DORM_DOOR_H, room.h);
+      cur = cz + DORM_DOOR_W / 2;
+    }
+    seg(cur, z1, 0, room.h);
+  }
+
+  // Room centre Z positions in the T-stub arms (same spacing logic as branch corridor)
+  const stubDoorZs = [];
+  {
+    const _firstSS = room.w / 2 + 0.075;
+    for (let dz = _firstSS; dz < T_STEM - room.w / 2 - 0.05; dz += doorSpacing) {
+      stubDoorZs.push(FRONT_Z    - dz);   // south arm
+      stubDoorZs.push(northWallZ + dz);   // north arm
+    }
+  }
+
+  // East wall (x = T_X + corridorW): full length with door openings
+  buildSegWallZ(tZ0, tZ1, T_X + corridorW, Math.PI / 2, stubDoorZs);
+  // West wall: two pieces flanking the branch opening, each with door openings
+  buildSegWallZ(tZ0,      FRONT_Z,    T_X, -Math.PI / 2, stubDoorZs.filter(z => z < FRONT_Z));
+  buildSegWallZ(northWallZ, tZ1,      T_X, -Math.PI / 2, stubDoorZs.filter(z => z > northWallZ));
+  // South & north end walls
+  function addTEndWall(z, ry) {
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(corridorW, room.h),
+      makeTMat(corridorW / 0.60, room.h / 0.30));
+    mesh.rotation.y = ry; mesh.position.set(tCenterX, room.h / 2, z);
+    hallGroup.add(mesh);
+  }
+  addTEndWall(tZ0, 0);
+  addTEndWall(tZ1, Math.PI);
+
+  // Lights: junction centre + south stub + north stub
+  [[tCenterX, 2.5, FRONT_Z + corridorW/2],
+   [tCenterX, 2.5, tZ0 + T_STEM/2],
+   [tCenterX, 2.5, tZ1 - T_STEM/2]
+  ].forEach(([x,y,z]) => {
+    const l = new THREE.PointLight(0xeef6ff, 1.0, 10);
+    l.position.set(x, y, z); hallGroup.add(l);
   });
 
-  // Decorative hallway doors (visible from the corridor for every room)
-  const decoDoorMat = new THREE.MeshStandardMaterial({ color:0x38302a, roughness:0.85, side: THREE.DoubleSide });
-  const decoDoorGeo = new THREE.PlaneGeometry(0.9, 2.0);
-  for (var dxi = 0; dxi < roomCentersX.length; dxi++) {
-    var dx = roomCentersX[dxi];
-    // South wall door (corridor side)
-    var dSouth = new THREE.Mesh(decoDoorGeo, decoDoorMat);
-    dSouth.position.set(dx, 1.0, room.d/2 + 0.008);
-    dSouth.rotation.y = Math.PI;
-    hallGroup.add(dSouth);
-    // South knob (corridor side)
-    var skMat = new THREE.MeshStandardMaterial({ color:0xc0c0c0, roughness:0.3, metalness:0.8 });
-    var sk = new THREE.Mesh(new THREE.SphereGeometry(0.04, 16, 16), skMat);
-    sk.position.set(dx + 0.9/2 - 0.06, 1.0, room.d/2 + 0.03);
-    hallGroup.add(sk);
-    // North wall door (corridor side)
-    var dNorth = new THREE.Mesh(decoDoorGeo, decoDoorMat);
-    dNorth.position.set(dx, 1.0, room.d/2 + corridorW - 0.008);
-    dNorth.rotation.y = 0;
-    hallGroup.add(dNorth);
-    // North knob (corridor side)
-    var nk = new THREE.Mesh(new THREE.SphereGeometry(0.04, 16, 16), skMat.clone());
-    nk.position.set(dx - 0.9/2 + 0.06, 1.0, room.d/2 + corridorW - 0.03);
-    hallGroup.add(nk);
-  }
+  // Spawn one simplified dorm room
+  function spawnDorm(cx, isNorth) {
+    const zFace = isNorth ? northWallZ : FRONT_Z;
+    const dir   = isNorth ? 1 : -1;
+    const zBack = zFace + dir * DORM_D;
+    const zMid  = (zFace + zBack) / 2;
 
-  // ---------- Other rooms (locked, furnished, both corridor sides) ----------
-  function createOtherRoom(roomCenterX, roomId, northSide) {
-    const R = { w: room.w, d: room.d, h: room.h };
-    const g = new THREE.Group();
-    g.name = 'room' + roomId;
-    if (northSide) {
-      g.position.set(roomCenterX, 0, room.d/2 + corridorW + R.d/2);
-      g.rotation.y = Math.PI;
-    } else {
-      g.position.set(roomCenterX, 0, 0);
-    }
+    // Floor
+    const fl = new THREE.Mesh(new THREE.PlaneGeometry(DORM_W, DORM_D), floorMat.clone());
+    fl.rotation.x = -Math.PI/2; fl.position.set(cx, 0, zMid);
+    fl.material.map = fl.material.map.clone();
+    fl.material.map.wrapS = fl.material.map.wrapT = THREE.RepeatWrapping;
+    fl.material.map.repeat.set(DORM_W/0.40, DORM_D/0.40);
+    scene.add(fl);
 
-    var fMat2 = floorMat.clone(); fMat2.map = floorMat.map.clone();
-    var rFloor = new THREE.Mesh(new THREE.PlaneGeometry(R.w, R.d), fMat2);
-    rFloor.rotation.x = -Math.PI/2;
-    rFloor.material.map.repeat.set(R.w / floorTile, R.d / floorTile);
-    g.add(rFloor);
+    // Ceiling
+    const ce = new THREE.Mesh(new THREE.PlaneGeometry(DORM_W, DORM_D), ceilingMat.clone());
+    ce.rotation.x = Math.PI/2; ce.position.set(cx, room.h, zMid);
+    scene.add(ce);
 
-    var rCeil = new THREE.Mesh(new THREE.PlaneGeometry(R.w, R.d), ceilingMat.clone());
-    rCeil.rotation.x = Math.PI/2; rCeil.position.set(0, R.h, 0);
-    g.add(rCeil);
+    // Walls: back + two sides (DoubleSide via makeWall)
+    scene.add(makeWall(DORM_W, room.h,  isNorth ? Math.PI : 0, [cx, room.h/2, zBack]));
+    scene.add(makeWall(DORM_D, room.h,  Math.PI/2,  [cx - DORM_W/2, room.h/2, zMid]));
+    scene.add(makeWall(DORM_D, room.h, -Math.PI/2,  [cx + DORM_W/2, room.h/2, zMid]));
 
-    function makeRWall(width, height, rotY, pos) {
-      var mat2 = new THREE.MeshStandardMaterial({ map: wallTex.clone(), roughness: 0.95, side: THREE.DoubleSide });
-      mat2.map.wrapS = mat2.map.wrapT = THREE.RepeatWrapping;
-      mat2.map.repeat.set(width / wallTileW, height / wallTileH);
-      var mesh = new THREE.Mesh(new THREE.PlaneGeometry(width, height), mat2);
-      mesh.position.set(pos[0], pos[1], pos[2]); mesh.rotation.y = rotY; return mesh;
-    }
-    var rBack  = makeRWall(R.w, R.h, 0,          [0, R.h/2, -R.d/2]); g.add(rBack);
-    var rLeft  = makeRWall(R.d, R.h, -Math.PI/2, [-R.w/2 + 0.015, R.h/2, 0]); g.add(rLeft);
-    var rRight = makeRWall(R.d, R.h,  Math.PI/2, [ R.w/2 - 0.015, R.h/2, 0]); g.add(rRight);
+    // ---- Two single beds against right wall (absolute dims) ----
+    const BED_W = 0.95, BED_L = 2.00;
+    const bedX = cx + DORM_W/2 - BED_W/2 - 0.04;   // flush right wall
+    [DORM_D - 1.15, DORM_D - 3.55].forEach(dFromFront => {
+      const bz = zFace + dir * dFromFront;
+      const fr = new THREE.Mesh(new THREE.BoxGeometry(BED_W, 0.25, BED_L), woodDark);
+      fr.position.set(bedX, 0.125, bz); scene.add(fr);
+      const mt = new THREE.Mesh(new THREE.BoxGeometry(BED_W - 0.04, 0.20, BED_L - 0.05), bedding);
+      mt.position.set(bedX, 0.33, bz); scene.add(mt);
+    });
 
-    // Front wall segments around door opening
-    var doorW = 0.9, doorH = 2.0, mg = 0.02;
-    var sideW = (R.w - doorW) / 2 - mg;
-    var rFrontL = makeRWall(sideW, R.h, Math.PI, [-(R.w/2 - sideW/2 - mg), R.h/2, R.d/2 - 0.015]); g.add(rFrontL);
-    var rFrontR = makeRWall(sideW, R.h, Math.PI, [ (R.w/2 - sideW/2 - mg), R.h/2, R.d/2 - 0.015]); g.add(rFrontR);
-    // Wall above door
-    var topH = R.h - doorH;
-    var rFrontTop = makeRWall(doorW, topH, Math.PI, [0, doorH + topH/2, R.d/2 - 0.015]); g.add(rFrontTop);
+    // ---- Wardrobe against left wall ----
+    const wa = new THREE.Mesh(new THREE.BoxGeometry(0.60, 2.00, 0.55), woodLight);
+    wa.position.set(cx - DORM_W/2 + 0.33, 1.00, zFace + dir * 0.90); scene.add(wa);
 
-    // Door (visible both sides)
-    var rDoor = new THREE.Mesh(new THREE.PlaneGeometry(doorW, doorH), new THREE.MeshStandardMaterial({ color: 0x3b2b1a, roughness: 0.9, side: THREE.DoubleSide }));
-    rDoor.position.set(0, 1.0, R.d/2 - 0.02); rDoor.rotation.y = Math.PI;
-    g.add(rDoor);
-
-    // Door knobs (both sides)
-    var knbMat = new THREE.MeshStandardMaterial({ color: 0xc0c0c0, roughness: 0.3, metalness: 0.8 });
-    var rK1 = new THREE.Mesh(new THREE.SphereGeometry(0.04, 16, 16), knbMat);
-    rK1.position.set(doorW/2 - 0.06, 1.0, R.d/2 + 0.02); g.add(rK1);
-    var rK2 = new THREE.Mesh(new THREE.SphereGeometry(0.04, 16, 16), knbMat.clone());
-    rK2.position.set(doorW/2 - 0.06, 1.0, R.d/2 - 0.04); g.add(rK2);
-
-    // Door collision blocker (invisible)
-    var doorBlocker = new THREE.Mesh(new THREE.BoxGeometry(doorW, doorH, 0.12), new THREE.MeshBasicMaterial({ visible: false }));
-    doorBlocker.position.set(0, doorH/2, R.d/2); doorBlocker.visible = false; g.add(doorBlocker);
-
-    // --- Furniture ---
-    // Curtains + heater (back wall)
-    var rCurt = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 1.8), new THREE.MeshStandardMaterial({ color: 0xeee7d6, roughness: 0.95 }));
-    rCurt.position.set(0, 1.6, -R.d/2 + 0.01); g.add(rCurt);
-    var rHeat = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.18, 0.08), new THREE.MeshStandardMaterial({ color: 0xf0f0f0, roughness: 0.6 }));
-    rHeat.position.set(0, 0.24, -R.d/2 + 0.04); g.add(rHeat);
-
-    // Bed 1: along back wall (full width)
-    var BED_D = 0.99, bed1W = R.w - 0.10;
-    var bf1 = new THREE.Mesh(new THREE.BoxGeometry(bed1W, 0.25, BED_D), woodDark);
-    bf1.position.set(0, 0.125, -R.d/2 + BED_D/2 + 0.05); g.add(bf1);
-    var bm1 = new THREE.Mesh(new THREE.BoxGeometry(bed1W - 0.05, 0.20, BED_D - 0.05), bedding);
-    bm1.position.set(0, 0.33, bf1.position.z); g.add(bm1);
-
-    // Bed 2: along right wall (lengthwise)
-    var bed2L = 2.0;
-    var bf2 = new THREE.Mesh(new THREE.BoxGeometry(BED_D, 0.25, bed2L), woodDark);
-    bf2.position.set(R.w/2 - BED_D/2 - 0.03, 0.125, -R.d/2 + BED_D + bed2L/2 + 0.10); g.add(bf2);
-    var bm2 = new THREE.Mesh(new THREE.BoxGeometry(BED_D - 0.05, 0.20, bed2L - 0.05), bedding);
-    bm2.position.set(bf2.position.x, 0.33, bf2.position.z); g.add(bm2);
-
-    // Wardrobe on left wall
-    var rWard = new THREE.Mesh(new THREE.BoxGeometry(0.60, 2.00, 0.95), woodLight);
-    rWard.position.set(-R.w/2 + 0.32, 1.00, -R.d/2 + 0.50); g.add(rWard);
-
-    // Desk on left wall (mid-room)
-    var dskTop = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.03, 1.00), woodLight);
-    dskTop.position.set(-R.w/2 + 0.295, 0.75, 0.4); g.add(dskTop);
-    var dskSide1 = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.73, 0.02), woodLight);
-    dskSide1.position.set(dskTop.position.x, 0.365, -0.08); g.add(dskSide1);
-    var dskSide2 = dskSide1.clone(); dskSide2.position.z = 0.88; g.add(dskSide2);
-
-    // Dresser near front-right
-    var rDres = new THREE.Mesh(new THREE.BoxGeometry(0.50, 0.85, 0.75), woodLight);
-    rDres.position.set(R.w/2 - 0.27, 0.425, R.d/2 - 0.88); g.add(rDres);
+    // ---- Desk against left wall ----
+    const dk = new THREE.Mesh(new THREE.BoxGeometry(0.65, 0.75, 0.55), woodLight);
+    dk.position.set(cx - DORM_W/2 + 0.36, 0.375, zFace + dir * 2.60); scene.add(dk);
 
     // Room light
-    var rLight = new THREE.PointLight(0xeef6ff, 0.7, 8);
-    rLight.position.set(0, R.h - 0.15, 0); g.add(rLight);
+    const lgt = new THREE.PointLight(0xeef6ff, 0.7, 7);
+    lgt.position.set(cx, room.h - 0.3, zMid); scene.add(lgt);
 
-    scene.add(g);
-    return { group: g, collidables: [rFloor, rCeil, rBack, rLeft, rRight, rFrontL, rFrontR, rFrontTop, rDoor, doorBlocker, bf1, bm1, bf2, bm2, rWard, dskTop, rDres] };
+    // === Door ===
+    // Pivot at left edge of doorway; opens inward (away from corridor)
+    const dormPivotZ  = zFace + dir * 0.005;        // just inside the room
+    const dormLeafZ   = dir * DOOR_T / 2;            // leaf offset from pivot (further in)
+    const dormRotDir  = isNorth ? 1 : -1;            // rotation direction: inward
+    const dormPivot   = new THREE.Group();
+    dormPivot.position.set(cx - DORM_DOOR_W / 2, 0, dormPivotZ);
+    scene.add(dormPivot);
+
+    const dormLeaf = new THREE.Mesh(
+      new THREE.BoxGeometry(DORM_DOOR_W, DORM_DOOR_H, DOOR_T),
+      new THREE.MeshStandardMaterial({ color: 0x3b2b1a, roughness: 0.9 })
+    );
+    dormLeaf.position.set(DORM_DOOR_W / 2, DORM_DOOR_H / 2, dormLeafZ);
+    dormPivot.add(dormLeaf);
+
+    const dormKnob = new THREE.Mesh(
+      new THREE.SphereGeometry(0.04, 16, 16),
+      new THREE.MeshStandardMaterial({ color: 0xc0c0c0, roughness: 0.3, metalness: 0.8 })
+    );
+    dormKnob.position.set(DORM_DOOR_W - 0.08, 1.0, -DOOR_T * 0.35);
+    dormLeaf.add(dormKnob);
+
+    dormPivot.userData = {
+      type: 'hingeDoor',
+      open: false,
+      theta: 0,
+      min: 0,
+      max: Math.PI * 0.55,
+      speed: 10,
+      rotDir: dormRotDir,
+    };
+    dormLeaf.userData.pivot = dormPivot;
+    hingeDoorPivots.push(dormPivot);
+    dormDoorLeaves.push(dormLeaf);   // registered later once arrays exist
   }
 
-  const otherRooms = [];
-  // South-side rooms (same side as room 239)
-  [{ cx: -7.72, id: 238 }, { cx: -3.86, id: 237 }, { cx: 3.86, id: 241 }, { cx: 7.72, id: 242 }].forEach(function(o) {
-    otherRooms.push(createOtherRoom(o.cx, o.id, false));
-  });
-  // North-side rooms (across the hall)
-  [{ cx: -7.72, id: 240 }, { cx: -3.86, id: 243 }, { cx: 0, id: 245 }, { cx: 3.86, id: 247 }, { cx: 7.72, id: 249 }].forEach(function(o) {
-    otherRooms.push(createOtherRoom(o.cx, o.id, true));
-  });
+  // Spawn a dorm room off the T-stub, extending in ±X from the east or west wall
+  function spawnDormX(cz, isEast) {
+    const xFace = isEast ? T_X + corridorW : T_X;
+    const xdir  = isEast ? 1 : -1;
+    const xBack = xFace + xdir * DORM_D;
+    const xMid  = (xFace + xBack) / 2;
 
-  // ---------- Room tracking + Door interaction system ----------
-  let currentRoom = 'room239';
-  const DOOR_PROX = 1.8; // distance to interact with door
-  const corridorMinZ = room.d/2;
-  const corridorMaxZ = room.d/2 + corridorW;
+    // Floor
+    const fl = new THREE.Mesh(new THREE.PlaneGeometry(DORM_D, DORM_W), floorMat.clone());
+    fl.rotation.x = -Math.PI / 2; fl.position.set(xMid, 0, cz);
+    fl.material.map = fl.material.map.clone();
+    fl.material.map.wrapS = fl.material.map.wrapT = THREE.RepeatWrapping;
+    fl.material.map.repeat.set(DORM_D / 0.40, DORM_W / 0.40);
+    scene.add(fl);
 
-  // World-space bounds for every room
-  const roomBoundsMap = {};
-  const ROOM_MARGIN = 0.25;
-  // Room 239 (south, cx=0)
-  roomBoundsMap['room239'] = { minX: -room.w/2 + ROOM_MARGIN, maxX: room.w/2 - ROOM_MARGIN, minZ: -room.d/2 + ROOM_MARGIN, maxZ: room.d/2 - ROOM_MARGIN };
-  // South rooms
-  [{ cx: -7.72, id: 238 }, { cx: -3.86, id: 237 }, { cx: 3.86, id: 241 }, { cx: 7.72, id: 242 }].forEach(function(o) {
-    roomBoundsMap['room' + o.id] = { minX: o.cx - room.w/2 + ROOM_MARGIN, maxX: o.cx + room.w/2 - ROOM_MARGIN, minZ: -room.d/2 + ROOM_MARGIN, maxZ: room.d/2 - ROOM_MARGIN };
-  });
-  // North rooms (positioned at z = room.d/2 + corridorW, extending another room.d northward)
-  [{ cx: -7.72, id: 240 }, { cx: -3.86, id: 243 }, { cx: 0, id: 245 }, { cx: 3.86, id: 247 }, { cx: 7.72, id: 249 }].forEach(function(o) {
-    var nz0 = room.d/2 + corridorW;
-    roomBoundsMap['room' + o.id] = { minX: o.cx - room.w/2 + ROOM_MARGIN, maxX: o.cx + room.w/2 - ROOM_MARGIN, minZ: nz0 + ROOM_MARGIN, maxZ: nz0 + room.d - ROOM_MARGIN };
-  });
+    // Ceiling
+    const ce = new THREE.Mesh(new THREE.PlaneGeometry(DORM_D, DORM_W), ceilingMat.clone());
+    ce.rotation.x = Math.PI / 2; ce.position.set(xMid, room.h, cz);
+    scene.add(ce);
 
-  // Door data: world position, corridor-side enter point, room-side exit point
-  const allDoors = [];
-  // Room 239 door
-  allDoors.push({ roomId: 'room239', doorX: 0, doorZ: room.d/2, side: 'south',
-    enterPos: new THREE.Vector3(0, EYE, room.d/2 - 0.5), enterYaw: Math.PI,
-    exitPos: new THREE.Vector3(0, EYE, room.d/2 + 0.5), exitYaw: 0
-  });
-  // South rooms
-  [{ cx: -7.72, id: 238 }, { cx: -3.86, id: 237 }, { cx: 3.86, id: 241 }, { cx: 7.72, id: 242 }].forEach(function(o) {
-    allDoors.push({ roomId: 'room' + o.id, doorX: o.cx, doorZ: room.d/2, side: 'south',
-      enterPos: new THREE.Vector3(o.cx, EYE, room.d/2 - 0.5), enterYaw: Math.PI,
-      exitPos: new THREE.Vector3(o.cx, EYE, room.d/2 + 0.5), exitYaw: 0
+    // Back wall (far end) + two side walls (run along X)
+    scene.add(makeWall(DORM_W, room.h, isEast ?  Math.PI / 2 : -Math.PI / 2, [xBack, room.h / 2, cz]));
+    scene.add(makeWall(DORM_D, room.h, 0,        [xMid,  room.h / 2, cz - DORM_W / 2]));
+    scene.add(makeWall(DORM_D, room.h, Math.PI,  [xMid,  room.h / 2, cz + DORM_W / 2]));
+
+    // Two beds flush against the +Z side wall
+    const BED_W = 0.95, BED_L = 2.00;
+    const bedZ = cz + DORM_W / 2 - BED_W / 2 - 0.04;
+    [DORM_D - 1.15, DORM_D - 3.55].forEach(dFromFace => {
+      const bx = xFace + xdir * dFromFace;
+      const fr = new THREE.Mesh(new THREE.BoxGeometry(BED_L, 0.25, BED_W), woodDark);
+      fr.position.set(bx, 0.125, bedZ); scene.add(fr);
+      const mt = new THREE.Mesh(new THREE.BoxGeometry(BED_L - 0.05, 0.20, BED_W - 0.04), bedding);
+      mt.position.set(bx, 0.33, bedZ); scene.add(mt);
     });
-  });
-  // North rooms
-  [{ cx: -7.72, id: 240 }, { cx: -3.86, id: 243 }, { cx: 0, id: 245 }, { cx: 3.86, id: 247 }, { cx: 7.72, id: 249 }].forEach(function(o) {
-    var dz = room.d/2 + corridorW;
-    allDoors.push({ roomId: 'room' + o.id, doorX: o.cx, doorZ: dz, side: 'north',
-      enterPos: new THREE.Vector3(o.cx, EYE, dz + 0.5), enterYaw: 0,
-      exitPos: new THREE.Vector3(o.cx, EYE, dz - 0.5), exitYaw: Math.PI
-    });
-  });
 
-  function findNearbyDoor() {
-    var px = camera.position.x, pz = camera.position.z;
-    for (var i = 0; i < allDoors.length; i++) {
-      var d = allDoors[i];
-      var dx = px - d.doorX, dz = pz - d.doorZ;
-      if (Math.sqrt(dx*dx + dz*dz) < DOOR_PROX) return d;
-    }
-    return null;
+    // Wardrobe + desk against the -Z side wall
+    const wa = new THREE.Mesh(new THREE.BoxGeometry(0.55, 2.00, 0.60), woodLight);
+    wa.position.set(xFace + xdir * 0.90, 1.00, cz - DORM_W / 2 + 0.33); scene.add(wa);
+    const dk = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.75, 0.65), woodLight);
+    dk.position.set(xFace + xdir * 2.60, 0.375, cz - DORM_W / 2 + 0.36); scene.add(dk);
+
+    // Room light
+    const lgt = new THREE.PointLight(0xeef6ff, 0.7, 7);
+    lgt.position.set(xMid, room.h - 0.3, cz); scene.add(lgt);
+
+    // Door — pivot at -Z edge of doorway, leaf extends +Z, opens inward in X
+    const dormRotDir = isEast ? -1 : 1;
+    const dormPivot  = new THREE.Group();
+    dormPivot.position.set(xFace + xdir * 0.005, 0, cz - DORM_DOOR_W / 2);
+    scene.add(dormPivot);
+
+    const dormLeaf = new THREE.Mesh(
+      new THREE.BoxGeometry(DOOR_T, DORM_DOOR_H, DORM_DOOR_W),
+      new THREE.MeshStandardMaterial({ color: 0x3b2b1a, roughness: 0.9 })
+    );
+    dormLeaf.position.set(xdir * DOOR_T / 2, DORM_DOOR_H / 2, DORM_DOOR_W / 2);
+    dormPivot.add(dormLeaf);
+
+    const dormKnob = new THREE.Mesh(
+      new THREE.SphereGeometry(0.04, 16, 16),
+      new THREE.MeshStandardMaterial({ color: 0xc0c0c0, roughness: 0.3, metalness: 0.8 })
+    );
+    dormKnob.position.set(xdir * DOOR_T * 0.35, 1.0, DORM_DOOR_W - 0.08);
+    dormLeaf.add(dormKnob);
+
+    dormPivot.userData = {
+      type: 'hingeDoor', open: false, theta: 0,
+      min: 0, max: Math.PI * 0.55, speed: 10, rotDir: dormRotDir,
+    };
+    dormLeaf.userData.pivot = dormPivot;
+    hingeDoorPivots.push(dormPivot);
+    dormDoorLeaves.push(dormLeaf);
   }
 
-  function tryDoorInteraction() {
-    var d = findNearbyDoor();
-    if (!d) return;
-    if (currentRoom === 'corridor') {
-      // Enter the room
-      camera.position.copy(d.enterPos);
-      yaw = d.enterYaw;
-      pitch = 0;
-      currentRoom = d.roomId;
-    } else if (currentRoom === d.roomId) {
-      // Exit to corridor
-      camera.position.copy(d.exitPos);
-      yaw = d.exitYaw;
-      pitch = 0;
-      currentRoom = 'corridor';
-    }
-  }
+  const hingeDoorPivots = [doorPivot];
+  const dormDoorLeaves  = [];   // collected during spawn, registered after arrays exist
+
+  southDormXs.forEach(cx => spawnDorm(cx, false));
+  dormDoorXs.forEach(cx => spawnDorm(cx, true));
+  // Rooms on both walls of the T-stub (east and west)
+  stubDoorZs.forEach(cz => { spawnDormX(cz, true); spawnDormX(cz, false); });
 
   // ---------- Interactions ----------
-  const interactables = [fridgeDoor]; // door is fixed on wall now (non-interactive)
+  const interactables = [fridgeDoor, doorLeaf];
   const raycaster = new THREE.Raycaster();
   const interactUI = document.getElementById('interact');
   let canInteract = null;
@@ -714,181 +865,786 @@ loadTHREE(function(){
     raycaster.setFromCamera({x:0,y:0}, camera);
     const picks = raycaster.intersectObjects(interactables, true);
     if(picks.length && picks[0].distance < 1.6) { canInteract = picks[0].object; }
-    interactUI.style.opacity = (canInteract || findNearbyDoor()) ? 1 : 0;
+    interactUI.style.opacity = canInteract ? 1 : 0;
   }
   function useObject(obj){
     if(!obj) return;
+    // Any hinged door leaf stores a reference to its pivot group
+    if(obj.userData && obj.userData.pivot){
+      obj.userData.pivot.userData.open = !obj.userData.pivot.userData.open;
+      return;
+    }
+    // Fridge and anything else with 'hinge' userData
     if(obj.userData && obj.userData.type === 'hinge'){ obj.userData.open = !obj.userData.open; }
   }
   function animateHinges(dt){
+    // Fridge door (pivot-matrix style)
     const d = fridgeDoor, ud = d.userData;
-    if(!ud || ud.type!=='hinge') return;
-    if(ud.theta === undefined) ud.theta = 0;
-    const target = ud.open ? ud.max : ud.min;
-    ud.theta += (target - ud.theta) * Math.min(1, dt*6);
-    const p = ud.pivot;
-    const m = new THREE.Matrix4()
-      .makeTranslation(-p.x, -p.y, -p.z)
-      .multiply(new THREE.Matrix4().makeRotationY(ud.theta))
-      .multiply(new THREE.Matrix4().makeTranslation(p.x, p.y, p.z));
-    d.matrixAutoUpdate = false; d.matrix.copy(m);
+    if(ud && ud.type==='hinge') {
+      if(ud.theta === undefined) ud.theta = 0;
+      const target = ud.open ? ud.max : ud.min;
+      ud.theta += (target - ud.theta) * Math.min(1, dt*6);
+      const p = ud.pivot;
+      const m = new THREE.Matrix4()
+        .makeTranslation(-p.x, -p.y, -p.z)
+        .multiply(new THREE.Matrix4().makeRotationY(ud.theta))
+        .multiply(new THREE.Matrix4().makeTranslation(p.x, p.y, p.z));
+      d.matrixAutoUpdate = false; d.matrix.copy(m);
+    }
+
+    // All hinged door pivots (player's + all dorm doors)
+    hingeDoorPivots.forEach(pivot => {
+      const dpud = pivot.userData;
+      if(dpud && dpud.type === 'hingeDoor') {
+        const target = dpud.open ? dpud.max : dpud.min;
+        dpud.theta += (target - dpud.theta) * Math.min(1, dt * dpud.speed);
+        pivot.rotation.y = (dpud.rotDir !== undefined ? dpud.rotDir : -1) * dpud.theta;
+      }
+    });
   }
 
   // ---------- Movement ----------
   const hud = document.getElementById('hud');
   hud.innerHTML = `<b>Game active.</b> LiDAR room: ${room.w.toFixed(3)}m × ${room.h.toFixed(3)}m × ${room.d.toFixed(3)}m.
-    WASD move • Shift sprint • Space jump • E interact/door • F flashlight • L overhead • R reset • P pointer-lock.`;
+    WASD move • Shift sprint • Space jump • E interact (fridge) • F flashlight • L overhead • R reset • P pointer-lock.`;
 
-  const keys = {};
-  addEventListener('keydown', e=>{ keys[e.code]=true; if(e.code==='KeyE'){ if(canInteract) useObject(canInteract); else tryDoorInteraction(); } });
-  addEventListener('keyup',   e=>{ keys[e.code]=false; });
-  addEventListener('keydown', e=>{
-    if(e.code==='KeyF'){ flashlight.intensity = flashlight.intensity>0 ? 0 : 1.2; }
-    if(e.code==='KeyL'){ overhead.intensity   = overhead.intensity>0   ? 0 : 0.03; }
-    if(e.code==='KeyR'){ camera.position.set(0, EYE, 1.75); vy = 0; onGround = true; currentRoom = 'room239'; }
+  // ===== Input state — events only set flags, sim consumes them =====
+  const inp = { keys: Object.create(null), fireHeld: false, useTap: false };
+
+  addEventListener('keydown', e => {
+    inp.keys[e.code] = true;
+    if (e.code === 'KeyE') inp.useTap = true;
+    if (e.code === 'KeyF') flashlight.intensity = flashlight.intensity > 0 ? 0 : 1.2;
+    if (e.code === 'KeyL') overhead.intensity   = overhead.intensity   > 0 ? 0 : 0.03;
+    if (e.code === 'KeyR') {
+      if (window.SpawnLoadout && SpawnLoadout.isActive()) {
+        SpawnLoadout.setInput({ reload: true });
+      } else {
+        player.x=0; player.y=EYE; player.z=1.75;
+        player.px=0; player.py=EYE; player.pz=1.75;
+        player.vx=0; player.vy=0; player.vz=0;
+        yaw=0; pitch=0;
+      }
+    }
+    if (e.code === 'KeyP') document.pointerLockElement ? document.exitPointerLock() : renderer.domElement.requestPointerLock();
+    if (window.SpawnLoadout && SpawnLoadout.isActive()) {
+      const n = e.code==='Digit1'?0:e.code==='Digit2'?1:e.code==='Digit3'?2:e.code==='Digit4'?3:e.code==='Digit5'?4:-1;
+      if (n >= 0) SpawnLoadout.setInput({ slotIndex: n });
+    }
   });
+  addEventListener('keyup', e => {
+    inp.keys[e.code] = false;
+    if (e.code === 'KeyR' && window.SpawnLoadout && SpawnLoadout.isActive())
+      SpawnLoadout.setInput({ reload: false });
+  });
+  renderer.domElement.addEventListener('mousedown', e => { if (e.button === 0) inp.fireHeld = true; });
+  renderer.domElement.addEventListener('mouseup',   e => { if (e.button === 0) inp.fireHeld = false; });
+  renderer.domElement.addEventListener('wheel', e => { if (window.SpawnLoadout && SpawnLoadout.isActive()) SpawnLoadout.setInput({ slotDelta: e.deltaY > 0 ? 1 : -1 }); }, { passive: true });
 
-  // Corridor bounds
-  const corrBounds = {
-    minX: -corridorLen/2 + 0.35,
-    maxX:  corridorLen/2 - 0.35,
-    minZ:  room.d/2 + ROOM_MARGIN,
-    maxZ:  room.d/2 + corridorW - ROOM_MARGIN
+  // ===== Player physics state =====
+  const player = {
+    x: 0, y: EYE, z: 1.75,      // current sim position
+    px: 0, py: EYE, pz: 1.75,   // previous position for render interpolation
+    vx: 0, vy: 0, vz: 0,
+    onGround: false,
+    coyote:  0,   // coyote time remaining (s)
+    jumpBuf: 0,   // jump buffer remaining (s)
+    fireCdt: 0,   // fire cooldown (s)
+    recoilP: 0,   // additive pitch offset (rad) — render only, decays
+    recoilK: 0,   // viewmodel kick 0–1 — render only, decays
   };
 
-  const GRAVITY = 9.8, speedWalk = 2.35, speedSprint = 4.1, jump = 4.7;
-  let vx=0, vy=0, vz=0, onGround=false;
+  // FOV management state
+  const fovState = { base: 75, current: 75, sprint: 0, firePulse: 0 };
+  let _lastDt = 0.016;
+  let _bobPhase = 0;
+  const vigEl   = document.getElementById('vignette');
+  const scopeEl = document.getElementById('scope-overlay');
+  const crossEl = document.getElementById('crosshair');
 
-  function move(dt){
-    const fwd = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
-    const right = new THREE.Vector3().crossVectors(fwd, new THREE.Vector3(0,1,0)).normalize();
-    const dir = new THREE.Vector3();
-    if(keys['KeyW']) dir.add(fwd);
-    if(keys['KeyS']) dir.sub(fwd);
-    if(keys['KeyA']) dir.sub(right);
-    if(keys['KeyD']) dir.add(right);
-    if(dir.lengthSq()>0) dir.normalize();
-    const spd = (keys['ShiftLeft']||keys['ShiftRight']) ? speedSprint : speedWalk;
-    vx = dir.x * spd; vz = dir.z * spd;
-    vy -= GRAVITY * dt;
-    if(onGround && keys['Space']){ vy = jump; onGround=false; }
-    const next = camera.position.clone().addScaledVector(new THREE.Vector3(vx,vy,vz), dt);
+  // ===== Movement tuning =====
+  const cfg = {
+    accelGnd: 62, accelAir: 16,      // snappier ground start
+    maxSpd: 5.0,  maxSprint: 8.5,
+    friction: 18,                    // faster stop = tighter feel
+    gravity: 22,  jumpVel: 7.2,      // sharper jump
+    coyoteT: 0.12, jumpBufT: 0.14,
+    fireRate: 9,
+    recoilDecay: 15, kickDecay: 22,  // faster pitch + viewmodel recovery
+  };
 
-    // ground & ceiling
-    if(next.y < EYE){ next.y = EYE; vy = 0; onGround = true; }
-    if(next.y > room.h-0.1){ next.y = room.h-0.1; }
+  // ===== Spatial constants =====
+  const DOOR_OPEN_ENOUGH = 0.22;
+  const DOORWAY_HALF_W   = DOOR_W * 0.5 - 0.20;
+  const DOOR_PASS_Z0     = FRONT_Z - 0.35;
+  const HM = 0.32;
 
-    // Dynamic room-based movement bounds
-    if (currentRoom === 'corridor') {
-      next.x = Math.max(corrBounds.minX, Math.min(corrBounds.maxX, next.x));
-      next.z = Math.max(corrBounds.minZ, Math.min(corrBounds.maxZ, next.z));
-    } else {
-      var rb = roomBoundsMap[currentRoom];
-      if (rb) {
-        next.x = Math.max(rb.minX, Math.min(rb.maxX, next.x));
-        next.z = Math.max(rb.minZ, Math.min(rb.maxZ, next.z));
+  function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+
+  // Returns true if (x, z) is inside any dorm room.
+  // Each threshold overlaps by HM so corridor → room transition is gapless.
+  function inDormRoom(x, z) {
+    const hw = DORM_W / 2 - HM;
+    const hz = DORM_W / 2 - HM;
+    // North dorms — corridor ends at northWallZ - HM, so start check HM early
+    if (z >= northWallZ - HM && z <= northWallZ + DORM_D - HM) {
+      for (const cx of dormDoorXs) {
+        if (x >= cx - hw && x <= cx + hw) return true;
+      }
+    }
+    // South dorms — corridor starts at FRONT_Z + 0.02, so extend check HM past wall
+    if (z <= FRONT_Z + HM && z >= FRONT_Z - DORM_D + HM) {
+      for (const cx of dormDoorXs) {
+        if (x >= cx - hw && x <= cx + hw) return true;
+      }
+    }
+    // East stub dorms — stub ends at T_X + corridorW - HM, start check HM early
+    if (x >= T_X + corridorW - HM && x <= T_X + corridorW + DORM_D - HM) {
+      for (const cz of stubDoorZs) {
+        if (z >= cz - hz && z <= cz + hz) return true;
+      }
+    }
+    // West stub dorms — stub starts at T_X + 0.02, extend check HM past wall
+    if (x <= T_X + HM && x >= T_X - DORM_D + HM) {
+      for (const cz of stubDoorZs) {
+        if (z >= cz - hz && z <= cz + hz) return true;
+      }
+    }
+    return false;
+  }
+
+  function inHallBounds(x, z) {
+    const inBranch = z >= FRONT_Z + 0.02 && z <= northWallZ - HM &&
+                     x >= -corridorLen/2 + HM && x <= T_X + corridorW - HM;
+    const inStub   = x >= T_X + 0.02 && x <= T_X + corridorW - HM &&
+                     z >= tZ0 + HM && z <= tZ1 - HM;
+    return inBranch || inStub || inDormRoom(x, z);
+  }
+
+  // ===== Fixed-timestep sim at 120 Hz =====
+  const SIM_HZ   = 120;
+  const FIXED_DT = 1 / SIM_HZ;
+  const MAX_FRAME = 0.05;
+  let simAcc  = 0;
+  let simLast = performance.now() / 1000;
+
+  function fixedUpdate(dt) {
+    // save previous position for render interpolation
+    player.px = player.x; player.py = player.y; player.pz = player.z;
+
+    // ---- interact tap (edge-detected via flag) ----
+    if (inp.useTap) { inp.useTap = false; useObject(canInteract); }
+
+    // ---- wish direction (Quake-style accel, counter-strafe works) ----
+    const sy = Math.sin(yaw), cy = Math.cos(yaw);
+    const fw = (inp.keys['KeyW'] ? 1 : 0) - (inp.keys['KeyS'] ? 1 : 0);
+    const st = (inp.keys['KeyD'] ? 1 : 0) - (inp.keys['KeyA'] ? 1 : 0);
+    // fwd = (-sin,0,-cos), right = (cos,0,-sin)
+    let wx = fw * (-sy) + st * cy;
+    let wz = fw * (-cy) + st * (-sy);
+    const wlen = Math.hypot(wx, wz);
+    if (wlen > 0) { wx /= wlen; wz /= wlen; }
+
+    const sprint = inp.keys['ShiftLeft'] || inp.keys['ShiftRight'];
+    const maxSpd = sprint ? cfg.maxSprint : cfg.maxSpd;
+
+    // ---- ground check ----
+    const wasGround = player.onGround;
+    if (player.y <= EYE + 0.001) { player.y = EYE; player.vy = 0; player.onGround = true; }
+    else player.onGround = false;
+
+    // coyote time: briefly allow jump after walking off a ledge
+    if (wasGround && !player.onGround) player.coyote = cfg.coyoteT;
+    else if (player.onGround) player.coyote = 0;
+    else player.coyote = Math.max(0, player.coyote - dt);
+
+    // jump buffer: jump pressed slightly before landing still fires
+    if (inp.keys['Space']) player.jumpBuf = cfg.jumpBufT;
+    else player.jumpBuf = Math.max(0, player.jumpBuf - dt);
+
+    if ((player.onGround || player.coyote > 0) && player.jumpBuf > 0) {
+      player.vy = cfg.jumpVel;
+      player.onGround = false; player.coyote = 0; player.jumpBuf = 0;
+    }
+
+    // ---- friction (ground only) ----
+    if (player.onGround) {
+      const spd = Math.hypot(player.vx, player.vz);
+      if (spd > 0) {
+        const ns = Math.max(0, spd - spd * cfg.friction * dt);
+        player.vx = player.vx / spd * ns;
+        player.vz = player.vz / spd * ns;
       }
     }
 
-    camera.position.copy(next);
-    setFlashTarget();
+    // ---- accelerate toward wish dir ----
+    if (wlen > 0) {
+      const accel = player.onGround ? cfg.accelGnd : cfg.accelAir;
+      const cur   = player.vx * wx + player.vz * wz;
+      const add   = Math.min(maxSpd - cur, accel * dt);
+      if (add > 0) { player.vx += wx * add; player.vz += wz * add; }
+    }
+
+    if (!player.onGround) player.vy -= cfg.gravity * dt;
+
+    // ---- integrate position ----
+    let nx = player.x + player.vx * dt;
+    let ny = player.y + player.vy * dt;
+    let nz = player.z + player.vz * dt;
+
+    if (ny < EYE) { ny = EYE; player.vy = 0; player.onGround = true; }
+    if (ny > room.h - 0.1) { ny = room.h - 0.1; player.vy = Math.min(0, player.vy); }
+
+    // ---- spatial bounds (same door/wall/hall logic) ----
+    const inDoorX  = Math.abs(nx - DOOR_X) <= DOORWAY_HALF_W;
+    const doorOpen = (doorPivot.userData.theta || 0) >= DOOR_OPEN_ENOUGH;
+    const RM = 0.35;
+    const rMinX = -room.w/2 + RM, rMaxX = room.w/2 - RM;
+    const rMinZ = -room.d/2 + RM, rMaxZ = FRONT_Z - RM;
+    const bMaxZ = northWallZ - HM;
+    const inStub = player.x >= T_X - 0.1 && player.x <= T_X + corridorW + 0.1;
+    const inHall = player.z >= FRONT_Z - 0.02 || inStub || inDormRoom(player.x, player.z);
+
+    if (!inHall) {
+      nx = clamp(nx, rMinX, rMaxX);
+      nz = (nz > DOOR_PASS_Z0 && inDoorX && doorOpen)
+        ? clamp(nz, rMinZ, bMaxZ) : clamp(nz, rMinZ, rMaxZ);
+    } else {
+      if (nz < FRONT_Z && inDoorX && doorOpen && !inStub) {
+        nx = clamp(nx, rMinX, rMaxX); nz = clamp(nz, rMinZ, bMaxZ);
+      } else if (!inHallBounds(nx, nz)) {
+        if      (inHallBounds(nx, player.z))  nz = player.z;
+        else if (inHallBounds(player.x, nz))  nx = player.x;
+        else                                  { nx = player.x; nz = player.z; }
+      }
+    }
+
+    player.x = nx; player.y = ny; player.z = nz;
+
+    // ---- recoil decay (exponential) ----
+    player.recoilP += (-player.recoilP) * Math.min(1, dt * cfg.recoilDecay);
+    player.recoilK += (-player.recoilK) * Math.min(1, dt * cfg.kickDecay);
+
+    // ---- fire (rate-limited in sim time, not wall-clock) ----
+    player.fireCdt = Math.max(0, player.fireCdt - dt);
+    if (inp.fireHeld && document.pointerLockElement === renderer.domElement &&
+        !(window.SpawnLoadout && SpawnLoadout.isActive()) && player.fireCdt <= 0) {
+      player.fireCdt = 1 / cfg.fireRate;
+      player.recoilP += 0.022;
+      player.recoilK  = 1.0;
+      fireShot();
+    }
+
+    // ---- SpawnLoadout sim tick (weapon fire, reload, bloom, recoil) ----
+    if (window.SpawnLoadout && SpawnLoadout.isActive()) {
+      SpawnLoadout.setInput({ fire: inp.fireHeld && !!document.pointerLockElement });
+      SpawnLoadout.update(dt);
+    }
   }
 
-  // ---------- PB-Glock Viewmodel + Shooting ----------
-  const PB_COLOR = 0xD2A566;
-  const pistolGroup = new THREE.Group();
-  const pbMat = new THREE.MeshStandardMaterial({ color: PB_COLOR, roughness:0.45, metalness:0.05 });
-  const darkMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness:0.6, metalness:0.2 });
-
-  const slide = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.06, 0.28), pbMat); slide.position.set(0, 0.02, -0.08); pistolGroup.add(slide);
-  const frame = new THREE.Mesh(new THREE.BoxGeometry(0.20, 0.08, 0.20), pbMat); frame.position.set(0, -0.03, -0.02); pistolGroup.add(frame);
-  const grip  = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.16, 0.10), pbMat); grip.rotation.x = Math.PI*0.08; grip.position.set(-0.03,-0.10,0.04); pistolGroup.add(grip);
-  const triggerGuard = new THREE.Mesh(new THREE.TorusGeometry(0.045, 0.01, 10, 24, Math.PI), darkMat);
-  triggerGuard.rotation.set(Math.PI/2, 0, Math.PI/2); triggerGuard.position.set(0.045, -0.045, 0.02); pistolGroup.add(triggerGuard);
-  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.06, 18), darkMat); barrel.rotation.x = Math.PI/2; barrel.position.set(0,0.02,-0.22); pistolGroup.add(barrel);
-  const muzzle = new THREE.Object3D(); muzzle.position.set(0,0.02,-0.25); pistolGroup.add(muzzle);
-  pistolGroup.position.set(0.28,-0.20,-0.55); pistolGroup.rotation.set(-0.07,-0.05,0.0); pistolGroup.scale.set(1.2,1.2,1.2);
-  pistolGroup.traverse(o=>{ if (o.isMesh) { o.material = o.material.clone(); o.material.depthTest=false; o.material.depthWrite=false; o.renderOrder = 9999; }});
-  camera.add(pistolGroup);
-
-  let recoilKick = 0;
-  function updateRecoil(dt){
-    recoilKick += (-recoilKick) * Math.min(1, dt * 14);
-    slide.position.z = -0.08 + Math.max(0,recoilKick) * -0.06;
-    pistolGroup.position.z = -0.55 + Math.max(0,recoilKick) * -0.04;
-    pistolGroup.rotation.x = -0.07 + recoilKick * -0.03;
-  }
-
-  // Colliders (room 239 + hall + wall segments + other rooms)
-  const collidables = [floor, ceiling, backWall, frontWall, leftWall, rightWall, wardrobe, dresser, fridge, fryer, bedLeftFrame, bedLeftMatt, bedRightFrame, bedRightMatt, door, hallFloor, hallCeiling, endWallL, endWallR];
-  southWallSegments.forEach(function(seg){ collidables.push(seg); });
-  northWallSegments.forEach(function(seg){ collidables.push(seg); });
-  otherRooms.forEach(function(r){ r.collidables.forEach(function(m){ collidables.push(m); }); });
-  collidables.push(fridgeDoor);
-
-  const bullets = [], impacts = [];
-  function spawnImpact(pos, normal){
-    const s = new THREE.Mesh(new THREE.SphereGeometry(0.015, 8, 8), new THREE.MeshStandardMaterial({ color:0xffeeaa, emissive:0xffcc66, emissiveIntensity:1.2, roughness:1.0 }));
-    s.position.copy(pos).addScaledVector(normal || new THREE.Vector3(), 0.003);
-    s.userData.ttl = 0.12; scene.add(s); impacts.push(s);
-  }
-  function spawnMuzzleFlash(){
-    const f = new THREE.Mesh(new THREE.ConeGeometry(0.04, 0.10, 10), new THREE.MeshStandardMaterial({ color:0xffcc66, emissive:0xffcc66, emissiveIntensity:1.5, roughness:0.4 }));
-    f.rotation.x = -Math.PI/2; muzzle.updateWorldMatrix(true, false);
-    const m = new THREE.Vector3(); muzzle.getWorldPosition(m); f.position.copy(m);
-    const dir = new THREE.Vector3(); camera.getWorldDirection(dir);
-    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0), dir.clone().normalize());
-    f.quaternion.copy(q); f.userData.ttl = 0.05; scene.add(f); impacts.push(f);
-  }
-
-  let lastShot = 0; const FIRE_RATE = 9;
-  addEventListener('mousedown', (e)=>{
-    if (e.button !== 0) return;
-    if (document.pointerLockElement !== renderer.domElement) return;
-    const now = performance.now()/1000;
-    if (now - lastShot < 1/FIRE_RATE) return; lastShot = now;
-    recoilKick = 1.0; spawnMuzzleFlash();
-
-    const start = new THREE.Vector3(); const dir = new THREE.Vector3();
-    muzzle.updateWorldMatrix(true,false); muzzle.getWorldPosition(start); camera.getWorldDirection(dir); dir.normalize();
-    const pellet = new THREE.Mesh(new THREE.SphereGeometry(0.01, 6, 6), new THREE.MeshStandardMaterial({ color:0xffd28a, emissive:0xffd28a, emissiveIntensity:0.2, roughness:0.9 }));
+  function fireShot() {
+    spawnMuzzleFlash();
+    const start = new THREE.Vector3(); camera.getWorldPosition(start);
+    const fdir = new THREE.Vector3(); camera.getWorldDirection(fdir); fdir.normalize();
+    const pellet = new THREE.Mesh(
+      new THREE.SphereGeometry(0.01, 6, 6),
+      new THREE.MeshStandardMaterial({ color:0xffd28a, emissive:0xffd28a, emissiveIntensity:0.2, roughness:0.9 })
+    );
     pellet.position.copy(start); scene.add(pellet);
-    const speed = 28; bullets.push({ mesh:pellet, vel:dir.clone().multiplyScalar(speed), alive:1.2 });
-  });
+    bullets.push({ mesh: pellet, vel: fdir.multiplyScalar(28), alive: 1.2, gravity: false });
+  }
+
+  // Player ref for SpawnLoadout (position, yaw, pitch, velocity, eyeHeight, isMoving, getFovRad, getAspect)
+  const playerForLoadout = {
+    get position(){ return camera.position; },
+    get yaw(){ return yaw; },
+    get pitch(){ return pitch; },
+    get vx(){ return player.vx; },
+    get vz(){ return player.vz; },
+    eyeHeight: 0,  // camera.position is already at eye level
+    get isMoving(){ return (Math.abs(player.vx)+Math.abs(player.vz)) > 0.1; },
+    getFovRad: function(){ return camera.fov * (Math.PI/180); },
+    getAspect: function(){ return camera.aspect; },
+  };
+
+  // ---------- Weapon Viewmodel System ----------
+  // Per-type position preset in camera space (+X right, +Y up, -Z forward)
+  const VM_PRESET = {
+    pistol:   { pos:[0.27,-0.20,-0.42], rx:-0.08, scale:1.0 },
+    smg:      { pos:[0.26,-0.20,-0.48], rx:-0.07, scale:1.1 },
+    shotgun:  { pos:[0.24,-0.19,-0.54], rx:-0.06, scale:1.1 },
+    ar:       { pos:[0.23,-0.18,-0.56], rx:-0.06, scale:1.1 },
+    dmr:      { pos:[0.22,-0.17,-0.58], rx:-0.05, scale:1.0 },
+    sniper:   { pos:[0.20,-0.16,-0.62], rx:-0.05, scale:1.0 },
+    marksman: { pos:[0.15,-0.17,-0.50], rx:-0.05, scale:1.2 },
+    utility:  { pos:[0.24,-0.19,-0.48], rx:-0.07, scale:1.1 },
+  };
+  // ADS position per type: centered (x≈0), slightly higher y, closer z
+  const ADS_PRESET = {
+    pistol:   [0.00,-0.17,-0.37],
+    smg:      [0.00,-0.16,-0.42],
+    shotgun:  [0.00,-0.15,-0.48],
+    ar:       [0.00,-0.14,-0.50],
+    dmr:      [0.00,-0.13,-0.52],
+    sniper:   [0.00,-0.12,-0.56],
+    marksman: [0.00,-0.13,-0.44],
+    utility:  [0.00,-0.15,-0.42],
+  };
+
+  function buildWeaponViewModel(w) {
+    const g = new THREE.Group();
+    const mDark = new THREE.MeshStandardMaterial({color:0x1a1a1a,roughness:0.50,metalness:0.65});
+    const mMid  = new THREE.MeshStandardMaterial({color:0x333333,roughness:0.45,metalness:0.50});
+    const mOliv = new THREE.MeshStandardMaterial({color:0x4a5240,roughness:0.65,metalness:0.1});
+    const mWood = new THREE.MeshStandardMaterial({color:0x6b4226,roughness:0.80,metalness:0.0});
+    const mScp  = new THREE.MeshStandardMaterial({color:0x111111,roughness:0.30,metalness:0.80});
+    // box helper: add a BoxGeometry mesh to g
+    function bx(mat,W,H,D,x,y,z,rx=0){
+      const m=new THREE.Mesh(new THREE.BoxGeometry(W,H,D),mat);
+      m.position.set(x,y,z); if(rx) m.rotation.x=rx; g.add(m); return m;
+    }
+    // cylinder helper: axis along -Z (barrel direction)
+    function cy(mat,r,len,x,y,z){
+      const m=new THREE.Mesh(new THREE.CylinderGeometry(r,r,len,12),mat);
+      m.position.set(x,y,z); m.rotation.x=Math.PI/2; g.add(m); return m;
+    }
+    function muzzleAt(x,y,z){ const p=new THREE.Object3D(); p.position.set(x,y,z); g.add(p); g.userData.muzzle=p; }
+
+    const t = w.type;
+    if (t === 'pistol') {
+      // slide + frame + grip + barrel
+      bx(mDark,0.048,0.036,0.190, 0,0.004,0);
+      bx(mMid ,0.040,0.096,0.135, 0,-0.056,0.020);
+      bx(mWood,0.034,0.090,0.072, 0,-0.076,0.058, 0.14);
+      cy(mDark,0.010,0.095, 0,0.005,-0.138);
+      bx(mDark,0.022,0.008,0.040, 0,0.025,-0.090); // front sight
+      bx(mDark,0.014,0.008,0.010, 0,0.025, 0.010); // rear sight
+      bx(mMid ,0.008,0.026,0.050, 0,-0.040,-0.025); // trigger guard
+      muzzleAt(0,0.005,-0.188);
+
+    } else if (t === 'smg') {
+      bx(mDark,0.050,0.062,0.230, 0,0.002,0);
+      bx(mOliv,0.044,0.112,0.068, 0,-0.064,0.058, 0.08);  // grip
+      bx(mMid ,0.034,0.095,0.058, 0,-0.064,-0.018);        // mag
+      cy(mDark,0.011,0.125, 0,0.013,-0.190);                // barrel
+      bx(mDark,0.028,0.028,0.082, 0,-0.006,0.132);          // folded stock
+      bx(mDark,0.036,0.012,0.095, 0,0.004,-0.096);          // foregrip
+      bx(mDark,0.024,0.008,0.040, 0,0.034,-0.060);          // top rail
+      muzzleAt(0,0.013,-0.252);
+
+    } else if (t === 'shotgun') {
+      bx(mDark,0.058,0.060,0.265, 0,0.002,0);               // receiver
+      bx(mMid ,0.052,0.038,0.115, 0,-0.011,-0.088);          // pump slide
+      cy(mDark,0.018,0.348, 0,0.018,-0.272);                 // barrel
+      cy(mDark,0.012,0.248, 0,-0.008,-0.212);                // tube mag
+      bx(mWood,0.042,0.108,0.072, 0,-0.060,0.062, 0.10);    // grip
+      bx(mWood,0.044,0.056,0.165, 0,0.008,0.168,-0.06);     // stock
+      bx(mDark,0.028,0.010,0.075, 0,0.034,-0.060);           // rib
+      muzzleAt(0,0.018,-0.448);
+
+    } else if (t === 'ar') {
+      bx(mOliv,0.052,0.064,0.265, 0,0.001,0);                // lower
+      bx(mDark,0.050,0.038,0.225, 0,0.029,-0.010);           // upper
+      bx(mDark,0.044,0.042,0.165, 0,0.021,-0.172);           // handguard
+      bx(mOliv,0.040,0.112,0.062, 0,-0.067,0.042, 0.14);    // grip
+      bx(mOliv,0.038,0.132,0.062, 0,-0.080,-0.010, 0.08);   // mag
+      cy(mDark,0.012,0.205, 0,0.026,-0.304);                 // barrel
+      bx(mOliv,0.040,0.036,0.185, 0,0.010,0.204,-0.04);     // stock
+      bx(mDark,0.020,0.014,0.026, 0,0.048,0.062);            // charging handle
+      bx(mDark,0.028,0.009,0.180, 0,0.049,-0.050);           // top rail
+      muzzleAt(0,0.026,-0.408);
+
+    } else if (t === 'dmr') {
+      bx(mDark,0.050,0.060,0.305, 0,0.001,0);
+      bx(mOliv,0.040,0.108,0.062, 0,-0.067,0.042, 0.14);    // grip
+      bx(mOliv,0.036,0.142,0.058, 0,-0.088,-0.010, 0.05);   // mag
+      cy(mDark,0.011,0.285, 0,0.024,-0.364);                 // barrel
+      bx(mDark,0.042,0.038,0.185, 0,0.019,-0.202);           // handguard
+      cy(mScp ,0.019,0.145, 0,0.063,-0.054);                 // scope tube
+      bx(mScp ,0.032,0.016,0.025, 0,0.063, 0.048);          // scope rear bell
+      bx(mScp ,0.028,0.016,0.025, 0,0.063,-0.158);          // scope front bell
+      bx(mOliv,0.038,0.040,0.205, 0,0.008,0.224,-0.05);     // stock
+      muzzleAt(0,0.024,-0.508);
+
+    } else if (t === 'sniper') {
+      bx(mDark,0.048,0.056,0.345, 0,0.001,0);
+      cy(mDark,0.012,0.385, 0,0.022,-0.434);                 // very long barrel
+      cy(mScp ,0.023,0.205, 0,0.071,-0.062);                 // scope
+      bx(mScp ,0.036,0.018,0.028, 0,0.071, 0.048);
+      bx(mScp ,0.030,0.018,0.028, 0,0.071,-0.172);
+      bx(mDark,0.018,0.018,0.048, 0.032,0.032,0.092);        // bolt handle
+      bx(mWood,0.038,0.102,0.060, 0,-0.067,0.052, 0.14);    // grip
+      bx(mWood,0.042,0.054,0.224, 0,0.008,0.248,-0.06);     // stock
+      bx(mDark,0.034,0.076,0.052, 0,-0.064,-0.010, 0.04);   // mag
+      bx(mDark,0.030,0.010,0.300, 0,0.050, 0.010);           // rail
+      muzzleAt(0,0.022,-0.628);
+
+    } else if (t === 'marksman') {
+      // Bow: limbs + riser + arrow
+      const mBow = new THREE.MeshStandardMaterial({color:0x5c3d1e,roughness:0.80});
+      const mStr = new THREE.MeshStandardMaterial({color:0xddddcc,roughness:1.0});
+      bx(mBow,0.020,0.225,0.026, 0, 0.132,-0.024, 0.05);   // upper limb
+      bx(mBow,0.020,0.205,0.026, 0,-0.122,-0.024,-0.05);   // lower limb
+      bx(mBow,0.036,0.092,0.042, 0,0,-0.016);               // riser
+      cy(mDark,0.005,0.325, 0,0.010,-0.178);                 // arrow shaft
+      bx(mDark,0.014,0.022,0.030, 0,0.010,-0.350);           // arrowhead
+      bx(mStr ,0.003,0.362,0.003, 0,0.010,-0.012);           // string
+      muzzleAt(0,0.010,-0.368);
+
+    } else {
+      // utility — grenade launcher
+      cy(mDark,0.035,0.225, 0,0.016,-0.158);                 // fat barrel
+      bx(mDark,0.054,0.054,0.155, 0,0.001,-0.020);           // frame
+      bx(mOliv,0.040,0.108,0.062, 0,-0.067,0.042, 0.16);    // grip
+      bx(mMid ,0.010,0.030,0.052, 0,-0.040,-0.022);          // trigger guard
+      bx(mDark,0.040,0.038,0.125, 0,0.008,0.118,-0.06);      // stock stub
+      muzzleAt(0,0.016,-0.272);
+    }
+    return g;
+  }
+
+  function _applyVMPreset(g, type) {
+    const p = VM_PRESET[type] || VM_PRESET.ar;
+    g.position.set(p.pos[0], p.pos[1], p.pos[2]);
+    g.rotation.set(p.rx, -0.05, 0);
+    g.scale.setScalar(p.scale);
+    g.userData.baseRotX = p.rx;
+    g.userData.basePosZ = p.pos[2];
+    g.userData.weaponType = type;
+    g.traverse(o => {
+      if (o.isMesh) {
+        o.material = o.material.clone();
+        o.material.depthTest = false; o.material.depthWrite = false; o.renderOrder = 9999;
+      }
+    });
+  }
+
+  let weaponVMGroup = null;
+
+  if (window.SpawnLoadout) {
+    SpawnLoadout.on('onWeaponChanged', ({ weapon }) => {
+      if (weaponVMGroup) { camera.remove(weaponVMGroup); weaponVMGroup = null; }
+      if (!weapon) return;
+      weaponVMGroup = buildWeaponViewModel(weapon);
+      _applyVMPreset(weaponVMGroup, weapon.type);
+      camera.add(weaponVMGroup);
+    });
+  }
+
+
+  // Colliders (room + hall + door)
+  const collidables = [
+    floor, ceiling,
+    backWall,
+    frontWallLeft, frontWallRight, frontWallTop,
+    leftWall, rightWall,
+    wardrobe, dresser, fridge, fryer,
+    bedLeftFrame, bedLeftMatt, bedRightFrame, bedRightMatt,
+    hallFloor, hallCeiling,
+    fridgeDoor,
+    doorLeaf
+  ];
+
+  // Register dorm doors now that both arrays exist
+  dormDoorLeaves.forEach(leaf => { interactables.push(leaf); collidables.push(leaf); });
+
+  const bullets = [];
+
+  // --- Object pools: impacts + muzzle flashes (ring-buffer, zero GC in hot path) ---
+  const IMPACT_COUNT = 28, FLASH_COUNT = 12;
+  const impactPool = [], flashPool = [];
+  let impactHead = 0, flashHead = 0;
+  (function initPools(){
+    const impGeo = new THREE.SphereGeometry(0.015, 6, 6);
+    const impMat = new THREE.MeshStandardMaterial({ color:0xffeeaa, emissive:0xffcc66, emissiveIntensity:1.2, roughness:1.0 });
+    for (let i = 0; i < IMPACT_COUNT; i++) {
+      const m = new THREE.Mesh(impGeo, impMat.clone()); m.visible = false; scene.add(m);
+      impactPool.push({ mesh: m, ttl: 0 });
+    }
+    const flGeo = new THREE.ConeGeometry(0.04, 0.10, 8);
+    const flMat = new THREE.MeshStandardMaterial({ color:0xffcc66, emissive:0xffcc66, emissiveIntensity:1.5, roughness:0.4, depthTest:false, depthWrite:false });
+    for (let i = 0; i < FLASH_COUNT; i++) {
+      const m = new THREE.Mesh(flGeo, flMat.clone()); m.visible = false; m.renderOrder = 9998; scene.add(m);
+      flashPool.push({ mesh: m, ttl: 0 });
+    }
+  })();
+
+  const _impNorm = new THREE.Vector3();
+  function spawnImpact(pos, normal) {
+    const slot = impactPool[impactHead++ % IMPACT_COUNT];
+    slot.mesh.position.copy(pos);
+    if (normal) slot.mesh.position.addScaledVector(normal, 0.003);
+    slot.mesh.material.emissiveIntensity = 1.2;
+    slot.mesh.scale.setScalar(1.0);
+    slot.mesh.visible = true;
+    slot.ttl = 0.14;
+  }
+
+  const _muzzlePos = new THREE.Vector3();
+  const _flashDir  = new THREE.Vector3();
+  const _flashQ    = new THREE.Quaternion();
+  const _yAxis     = new THREE.Vector3(0, 1, 0);
+  function spawnMuzzleFlash() {
+    const muzzleObj = weaponVMGroup && weaponVMGroup.userData.muzzle;
+    if (!muzzleObj) return;
+    muzzleObj.updateWorldMatrix(true, false);
+    muzzleObj.getWorldPosition(_muzzlePos);
+    camera.getWorldDirection(_flashDir);
+    _flashQ.setFromUnitVectors(_yAxis, _flashDir);
+    const slot = flashPool[flashHead++ % FLASH_COUNT];
+    slot.mesh.position.copy(_muzzlePos);
+    slot.mesh.quaternion.copy(_flashQ);
+    slot.mesh.scale.setScalar(0.75 + Math.random() * 0.5);
+    slot.mesh.visible = true;
+    slot.ttl = 0.05;
+  }
+
+  // --- Tracer ring buffer: 12 pre-alloc THREE.Line objects, zero GC per shot ---
+  const TRACER_N = 12;
+  const _tracerPool = [];
+  let _tracerHead = 0;
+  (function initTracers() {
+    for (let i = 0; i < TRACER_N; i++) {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+      const mat = new THREE.LineBasicMaterial({ color: 0xffdd88, transparent: true, opacity: 0, depthTest: true });
+      const ln = new THREE.Line(geo, mat);
+      ln.userData.ttl = 0; ln.visible = false;
+      scene.add(ln); _tracerPool.push(ln);
+    }
+  })();
+
+  const _tEnd = new THREE.Vector3();
+  function spawnTracer(ox, oy, oz, ex, ey, ez, col, ttl) {
+    const ln = _tracerPool[_tracerHead % TRACER_N]; _tracerHead++;
+    const pa = ln.geometry.attributes.position.array;
+    pa[0]=ox; pa[1]=oy; pa[2]=oz; pa[3]=ex; pa[4]=ey; pa[5]=ez;
+    ln.geometry.attributes.position.needsUpdate = true;
+    ln.material.color.setHex(col || 0xffdd88);
+    ln.material.opacity = 0.90;
+    ln.userData.ttl = ttl || 0.07;
+    ln.visible = true;
+  }
+
+  // Reusable temps for bullet update — zero GC in hot path
+  const _bPrev = new THREE.Vector3();
+  const _bDir  = new THREE.Vector3();
 
   function updateBullets(dt){
     for(let i=bullets.length-1;i>=0;i--){
       const b = bullets[i];
-      const prev = b.mesh.position.clone();
+      if (b.gravity) b.vel.y -= 9.8 * dt;   // arrow / grenade drop
+      _bPrev.copy(b.mesh.position);
       b.mesh.position.addScaledVector(b.vel, dt); b.alive -= dt;
-      const segDir = b.mesh.position.clone().sub(prev); const segLen = segDir.length();
+      _bDir.subVectors(b.mesh.position, _bPrev);
+      const segLen = _bDir.length();
       if (segLen > 0){
-        segDir.normalize(); raycaster.set(prev, segDir); raycaster.far = segLen + 0.02;
+        _bDir.multiplyScalar(1/segLen);
+        raycaster.set(_bPrev, _bDir); raycaster.far = segLen + 0.02;
         const hits = raycaster.intersectObjects(collidables, false);
         if (hits.length){ const hit = hits[0]; spawnImpact(hit.point, hit.face?.normal); scene.remove(b.mesh); bullets.splice(i,1); continue; }
       }
       if (b.alive <= 0){ scene.remove(b.mesh); bullets.splice(i,1); }
     }
-    for(let i=impacts.length-1;i>=0;i--){ const fx=impacts[i]; fx.userData.ttl -= dt; if(fx.material && fx.material.emissiveIntensity!==undefined) fx.material.emissiveIntensity *= 0.85; fx.scale.multiplyScalar(0.9); if(fx.userData.ttl<=0){ scene.remove(fx); impacts.splice(i,1); } }
+    // Update pooled impact sparks
+    for (let i = 0; i < IMPACT_COUNT; i++) {
+      const s = impactPool[i]; if (!s.mesh.visible) continue;
+      s.ttl -= dt;
+      if (s.ttl <= 0) { s.mesh.visible = false; continue; }
+      s.mesh.material.emissiveIntensity *= 0.80;
+      s.mesh.scale.multiplyScalar(0.87);
+    }
+    // Update pooled muzzle flashes
+    for (let i = 0; i < FLASH_COUNT; i++) {
+      const f = flashPool[i]; if (!f.mesh.visible) continue;
+      f.ttl -= dt;
+      if (f.ttl <= 0) f.mesh.visible = false;
+    }
+    // Update tracer ring buffer
+    for (let i = 0; i < TRACER_N; i++) {
+      const ln = _tracerPool[i]; if (!ln.visible) continue;
+      ln.userData.ttl -= dt;
+      ln.material.opacity *= 0.72;
+      if (ln.userData.ttl <= 0 || ln.material.opacity < 0.02) ln.visible = false;
+    }
   }
 
-  // ---------- Loop ----------
-  const hudText = 'Loaded: Door fixed on wall. Corridor runs side-to-side outside.';
-  let last = performance.now();
-  function animate(){
-    const now = performance.now();
-    const dt = Math.min(0.05, (now-last)/1000); last = now;
-    move(dt);
+  // ---------- SpawnLoadout Integration ----------
+  if (window.SpawnLoadout) {
+    // Hitscan hit → scene geometry impact via THREE.js raycaster
+    const _slRay  = new THREE.Raycaster();
+    const _slOrig = new THREE.Vector3();
+    const _slDir  = new THREE.Vector3();
+    // Per-weapon tracer frequency: smg=every 3, ar=every 5, dmr/sniper=every shot
+    let _tracerShotN = 0;
+    const _tFreq = { smg:3, pistol:4, ar:5, dmr:1, sniper:1, shotgun:0, marksman:0, utility:0 };
+
+    SpawnLoadout.setRaycastHit(function(hit) {
+      _slOrig.set(hit.origin.x,    hit.origin.y,    hit.origin.z);
+      _slDir .set(hit.direction.x, hit.direction.y, hit.direction.z);
+      _slRay.set(_slOrig, _slDir); _slRay.far = 200;
+      const hits = _slRay.intersectObjects(collidables, false);
+      if (hits.length) spawnImpact(hits[0].point, hits[0].face?.normal);
+      // Tracer: frequency-gated per weapon type
+      const wt = SpawnLoadout.currentWeapon ? SpawnLoadout.currentWeapon() : null;
+      if (wt && wt.tracerColor) {
+        const freq = _tFreq[wt.type] ?? 4;
+        if (freq > 0 && (++_tracerShotN % freq === 0)) {
+          const d = hit.distance < 200 ? hit.distance : 80;
+          _tEnd.set(hit.origin.x + hit.direction.x * d,
+                    hit.origin.y + hit.direction.y * d,
+                    hit.origin.z + hit.direction.z * d);
+          if (hits.length) _tEnd.copy(hits[0].point);
+          spawnTracer(hit.origin.x, hit.origin.y, hit.origin.z,
+                      _tEnd.x, _tEnd.y, _tEnd.z, wt.tracerColor, 0.08);
+        }
+      }
+    });
+
+    // Projectile weapons (bow, GL) → reuse existing bullet pool with gravity
+    SpawnLoadout.setSpawnProjectile(function(proj) {
+      const isArrow = proj.weapon.type === 'marksman';
+      const mesh = new THREE.Mesh(
+        isArrow
+          ? new THREE.CylinderGeometry(0.008, 0.008, 0.30, 8)
+          : new THREE.SphereGeometry(0.055, 8, 8),
+        new THREE.MeshStandardMaterial({
+          color: isArrow ? 0xccaa55 : 0x33441a,
+          emissive: isArrow ? 0xaa8833 : 0x223300,
+          emissiveIntensity: 0.6, roughness: 0.75
+        })
+      );
+      if (isArrow) mesh.rotation.x = Math.PI / 2;
+      mesh.position.set(proj.origin.x, proj.origin.y, proj.origin.z);
+      scene.add(mesh);
+      const vel = new THREE.Vector3(proj.dir.x, proj.dir.y, proj.dir.z).multiplyScalar(proj.speed);
+      bullets.push({ mesh, vel, alive: 4.0, gravity: true });
+    });
+
+    // Attach loadout to player — fires onWeaponChanged → builds first viewmodel
+    SpawnLoadout.attachToPlayer(playerForLoadout, {
+      seed: Math.floor(Math.random() * 0xffffffff),
+      recoilApply: function(_rx, ry) {
+        player.recoilP += ry * 0.016;
+        player.recoilK  = Math.min(1.0, player.recoilK + ry * 0.55);
+      },
+    });
+
+    // FX callback: muzzle flash + direct tracer events from SpawnLoadout
+    SpawnLoadout.setFxCallback(function(fx) {
+      if (fx.type === 'muzzleFlash') {
+        spawnMuzzleFlash();
+      }
+    });
+
+    // FOV fire pulse on each weapon shot
+    SpawnLoadout.on('onWeaponFired', function() {
+      fovState.firePulse = Math.min(fovState.firePulse + 1.8, 5.0);
+    });
+  }
+
+  // ---------- Render frame (interpolated) ----------
+  function renderFrame(alpha) {
+    const dt = _lastDt;
+
+    // Lerp player position to eliminate physics jitter
+    const cx = player.px + (player.x - player.px) * alpha;
+    const cy = player.py + (player.y - player.py) * alpha;
+    const cz = player.pz + (player.z - player.pz) * alpha;
+
+    // Camera bob: speed-scaled amplitude, sprint doubles the effect
+    const spd2d = Math.hypot(player.vx, player.vz);
+    const sprinting = inp.keys['ShiftLeft'] || inp.keys['ShiftRight'];
+    const bobAmpMax = sprinting ? 0.016 : 0.009;
+    const bobAmt = player.onGround ? Math.min(spd2d / cfg.maxSprint, 1) * bobAmpMax : 0;
+    _bobPhase += dt * spd2d * (sprinting ? 4.2 : 3.0);
+    const camBobY = Math.sin(_bobPhase) * bobAmt;
+    const camBobX = Math.sin(_bobPhase * 0.5) * bobAmt * 0.28;
+
+    camera.position.set(cx + camBobX * 0.4, cy + camBobY, cz);
+    camera.rotation.set(pitch + player.recoilP + camBobY * 0.25, yaw, camBobX * 0.6);
+
+    // --- FOV management ---
+    const vmT = (window.SpawnLoadout && SpawnLoadout.getViewmodelTransform)
+      ? SpawnLoadout.getViewmodelTransform() : null;
+    const fovMul = vmT ? vmT.fovMul : 1.0;
+    const targetSprintBoost = (sprinting && spd2d > 2.0) ? 4.5 : 0;
+    fovState.sprint += (targetSprintBoost - fovState.sprint) * Math.min(1, dt * 9);
+    fovState.firePulse = Math.max(0, fovState.firePulse - dt * 22);
+    const targetFov = (fovState.base + fovState.sprint + fovState.firePulse) * fovMul;
+    fovState.current += (targetFov - fovState.current) * Math.min(1, dt * 20);
+    if (Math.abs(camera.fov - fovState.current) > 0.05) {
+      camera.fov = fovState.current;
+      camera.updateProjectionMatrix();
+    }
+
+    // --- Viewmodel: ADS lerp + procedural sway + recoil kick ---
+    if (weaponVMGroup) {
+      const k = Math.max(0, player.recoilK);
+      if (vmT) {
+        const wType = weaponVMGroup.userData.weaponType || 'ar';
+        const hip = VM_PRESET[wType] || VM_PRESET.ar;
+        const ads = ADS_PRESET[wType] || ADS_PRESET.ar;
+        const ap = vmT.adsProgress;
+        weaponVMGroup.position.set(
+          hip.pos[0] + (ads[0] - hip.pos[0]) * ap + vmT.dx,
+          hip.pos[1] + (ads[1] - hip.pos[1]) * ap + vmT.dy,
+          hip.pos[2] + (ads[2] - hip.pos[2]) * ap + vmT.dz + k * -0.050
+        );
+        weaponVMGroup.rotation.set(
+          hip.rx  + (0 - hip.rx)  * ap + vmT.drx + k * -0.038,
+          -0.05 * (1 - ap) + vmT.dry,
+          vmT.drz
+        );
+      } else {
+        weaponVMGroup.position.z = (weaponVMGroup.userData.basePosZ || -0.50) + k * -0.050;
+        weaponVMGroup.rotation.x = (weaponVMGroup.userData.baseRotX || -0.07) + k * -0.038;
+      }
+    }
+
+    // --- Vignette (speed-based) ---
+    if (vigEl) vigEl.style.opacity = (Math.min(spd2d / cfg.maxSprint, 1) * 0.60).toFixed(2);
+
+    // --- Scope overlay + crosshair ADS state ---
+    if (vmT && weaponVMGroup) {
+      const wType = weaponVMGroup.userData.weaponType || 'ar';
+      const isSniper = (wType === 'sniper');
+      if (isSniper && vmT.adsProgress > 0.80) {
+        const op = ((vmT.adsProgress - 0.80) / 0.20).toFixed(2);
+        if (scopeEl) { scopeEl.style.display = 'block'; scopeEl.style.opacity = op; }
+        if (crossEl) crossEl.style.opacity = (1 - Number(op)).toFixed(2);
+      } else {
+        if (scopeEl) { scopeEl.style.opacity = '0'; if (vmT.adsProgress < 0.05) scopeEl.style.display = 'none'; }
+        if (crossEl) { crossEl.style.opacity = '1'; crossEl.classList.toggle('ads', vmT.adsProgress > 0.45 && !isSniper); }
+      }
+    }
+
+    setFlashTarget();
     updateInteractables();
-    animateHinges(dt);
-    updateRecoil(dt);
-    updateBullets(dt);
     renderer.render(scene, camera);
-    requestAnimationFrame(animate);
+  }
+
+  // ---------- Main loop: fixed sim + render ----------
+  const hudText = 'WASD move • Shift sprint • Space jump • E interact • F flashlight • L overhead • R reset • P lock.';
+  function loop() {
+    const now = performance.now() / 1000;
+    let dt = now - simLast; simLast = now;
+    if (dt > MAX_FRAME) dt = MAX_FRAME;
+    simAcc += dt;
+    while (simAcc >= FIXED_DT) {
+      fixedUpdate(FIXED_DT);
+      simAcc -= FIXED_DT;
+    }
+    const alpha = simAcc / FIXED_DT;
+    _lastDt = dt;
+    animateHinges(dt);
+    updateBullets(dt);
+    renderFrame(alpha);
+    requestAnimationFrame(loop);
   }
 
   renderer.render(scene, camera);
-  requestAnimationFrame(animate);
+  requestAnimationFrame(loop);
 
   addEventListener('resize', ()=>{ camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
 
